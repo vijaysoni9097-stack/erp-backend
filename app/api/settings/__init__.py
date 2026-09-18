@@ -1,0 +1,1 @@
+"""Pharmacist settings API feature."""
