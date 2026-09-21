@@ -154,6 +154,16 @@ class PasswordChange(BaseModel):
         return self
 
 
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=150)
+    password: str = Field(min_length=12, max_length=128)
+
+
+class LoginResponse(BaseModel):
+    success: bool = True
+    profile: PharmacistProfileRead
+
+
 class PrescriptionPreferences(BaseModel):
     default_prescription_duration_days: int = Field(default=7, ge=1, le=365)
     auto_refill_reminders: bool = True
