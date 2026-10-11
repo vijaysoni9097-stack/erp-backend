@@ -9,6 +9,9 @@ from app.models.medicines import Medicine, StockMovement, StockMovementType
 from app.models.prescriptions import Prescription, PrescriptionStatus
 from app.models.sales import Sale, SaleItem, SaleStatus
 from app.models.settings import (
+    AuthSession,
+    Employee,
+    EmployeeRole,
     NotificationEventType,
     NotificationPreference,
     PharmacistProfile,
@@ -17,6 +20,9 @@ from app.models.settings import (
 from app.models.suppliers import Supplier
 
 __all__ = [
+    "AuthSession",
+    "Employee",
+    "EmployeeRole",
     "Customer",
     "Medicine",
     "NotificationEventType",

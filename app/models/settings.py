@@ -20,10 +20,23 @@ class NotificationEventType(str, Enum):
     system_alerts = "system_alerts"
 
 
-class PharmacistProfile(Base):
-    """The local pharmacist profile; link this to an authenticated user in production."""
+class EmployeeRole(str, Enum):
+    doctor = "doctor"
+    superadmin = "superadmin"
+    admin = "admin"
+    pharmacist = "pharmacist"
+    nurse = "nurse"
+    receptionist = "receptionist"
 
-    __tablename__ = "pharmacist_profiles"
+
+class Employee(Base):
+    """Employee identity, professional profile, and local credentials."""
+
+    __tablename__ = "employee_table"
+
+    role: Mapped[EmployeeRole] = mapped_column(SqlEnum(EmployeeRole, native_enum=False, create_constraint=True), default=EmployeeRole.pharmacist, server_default="pharmacist")
+    professional_bio: Mapped[str | None] = mapped_column(Text())
+    photo_data_url: Mapped[str | None] = mapped_column(Text())
 
     id: Mapped[int] = mapped_column(primary_key=True, default=1)
     first_name: Mapped[str] = mapped_column(String(100))
@@ -47,6 +60,21 @@ class PharmacistProfile(Base):
     biometric_login_enabled: Mapped[bool] = mapped_column(Boolean(), default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now(), onupdate=func.now())
+
+
+PharmacistProfile = Employee  # Compatibility for existing pharmacy APIs.
+
+
+class AuthSession(Base):
+    """A revocable local login session; only a digest of the bearer token is stored."""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("employee_table.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now())
 
 
 class PharmacySettings(Base):

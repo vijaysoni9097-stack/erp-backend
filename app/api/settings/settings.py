@@ -1,17 +1,17 @@
 from fastapi import Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.base import BaseAPI, RouteDefinition
 from app.api.common import get_or_404
 from app.database import get_db
-from app.models import NotificationEventType, NotificationPreference, Supplier
+from app.models import PharmacistProfile, AuthSession, NotificationEventType, NotificationPreference, Supplier
 from app.schemas import (
     InventoryPreferences,
     NotificationPreferences,
     PasswordChange,
-    PharmacistProfileBase,
+    EmployeeProfileUpdate,
     PharmacistProfileRead,
     PrescriptionPreferences,
     PrinterSettings,
@@ -19,6 +19,7 @@ from app.schemas import (
     SecuritySettingsUpdate,
     SettingsOverview,
 )
+from app.services.auth import get_current_profile
 from app.services.security import hash_secret, verify_secret
 from app.services.settings import (
     as_inventory_preferences,
@@ -26,7 +27,6 @@ from app.services.settings import (
     as_prescription_preferences,
     as_printer_settings,
     as_security_settings,
-    get_default_profile,
     get_pharmacy_preferences,
 )
 
@@ -64,9 +64,8 @@ class SettingsAPI(BaseAPI):
     ]
 
     @staticmethod
-    def get(db: Session = Depends(get_db)) -> SettingsOverview:
+    def get(db: Session = Depends(get_db), profile: PharmacistProfile = Depends(get_current_profile)) -> SettingsOverview:
         """Return every settings section required to render the pharmacist settings page."""
-        profile = get_default_profile(db)
         preferences = get_pharmacy_preferences(db)
         return SettingsOverview(
             profile=PharmacistProfileRead.model_validate(profile),
@@ -78,13 +77,19 @@ class SettingsAPI(BaseAPI):
         )
 
     @staticmethod
-    def get_profile(db: Session = Depends(get_db)):
-        return get_default_profile(db)
+    def get_profile(profile: PharmacistProfile = Depends(get_current_profile)):
+        return profile
 
     @staticmethod
-    def put_profile(payload: PharmacistProfileBase, db: Session = Depends(get_db)):
-        profile = get_default_profile(db)
-        for field_name, value in payload.model_dump().items():
+    def put_profile(payload: EmployeeProfileUpdate, db: Session = Depends(get_db),
+                    profile: PharmacistProfile = Depends(get_current_profile)):
+        duplicate = db.scalar(select(PharmacistProfile.id).where(
+            func.lower(PharmacistProfile.email) == payload.email,
+            PharmacistProfile.id != profile.id,
+        ))
+        if duplicate is not None:
+            raise HTTPException(status_code=409, detail="Email address is already in use")
+        for field_name, value in payload.model_dump(exclude_unset=True).items():
             setattr(profile, field_name, value)
         try:
             db.commit()
@@ -95,13 +100,14 @@ class SettingsAPI(BaseAPI):
         return profile
 
     @staticmethod
-    def post_password(payload: PasswordChange, db: Session = Depends(get_db)) -> None:
+    def post_password(payload: PasswordChange, db: Session = Depends(get_db),
+                      profile: PharmacistProfile = Depends(get_current_profile)) -> None:
         """Set the initial password or verify the current password before replacing it."""
-        profile = get_default_profile(db)
         if profile.password_hash:
             if payload.current_password is None or not verify_secret(payload.current_password, profile.password_hash):
                 raise HTTPException(status_code=422, detail="Current password is incorrect")
         profile.password_hash = hash_secret(payload.new_password)
+        db.execute(delete(AuthSession).where(AuthSession.profile_id == profile.id))
         db.commit()
 
     @staticmethod
@@ -165,13 +171,13 @@ class SettingsAPI(BaseAPI):
         return as_notification_preferences(db)
 
     @staticmethod
-    def get_security(db: Session = Depends(get_db)) -> SecuritySettingsRead:
-        return as_security_settings(get_default_profile(db))
+    def get_security(profile: PharmacistProfile = Depends(get_current_profile)) -> SecuritySettingsRead:
+        return as_security_settings(profile)
 
     @staticmethod
     def put_security(payload: SecuritySettingsUpdate,
-                     db: Session = Depends(get_db)) -> SecuritySettingsRead:
-        profile = get_default_profile(db)
+                     db: Session = Depends(get_db),
+                     profile: PharmacistProfile = Depends(get_current_profile)) -> SecuritySettingsRead:
         if payload.pin_login_enabled and profile.pin_hash is None and payload.pin is None:
             raise HTTPException(status_code=422, detail="A 4 to 6 digit PIN is required before PIN login can be enabled")
         if payload.pin is not None:

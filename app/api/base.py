@@ -3,7 +3,9 @@
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+
+from app.services.auth import get_current_profile
 
 
 @dataclass(frozen=True)
@@ -22,6 +24,7 @@ class RouteDefinition:
 class BaseAPI:
     """Base class for a feature API with explicit route registration."""
 
+    public: ClassVar[bool] = False
     methods: ClassVar[list[str]] = []
     routes: ClassVar[list[RouteDefinition]] = []
 
@@ -38,4 +41,5 @@ class BaseAPI:
                 status_code=route.status_code,
                 summary=route.summary,
                 tags=route.tags,
+                dependencies=[] if cls.public else [Depends(get_current_profile)],
             )

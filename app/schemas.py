@@ -1,9 +1,9 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models import PrescriptionStatus, SaleStatus, StockMovementType
+from app.models import EmployeeRole, PrescriptionStatus, SaleStatus, StockMovementType
 
 
 class ORMModel(BaseModel):
@@ -119,6 +119,25 @@ class StockMovementRead(ORMModel):
 
 
 class PharmacistProfileBase(BaseModel):
+    professional_bio: str | None = Field(default=None, max_length=5000)
+    photo_data_url: str | None = Field(default=None, max_length=2_800_000)
+
+    @field_validator('photo_data_url')
+    @classmethod
+    def validate_photo(cls, value):
+        if value is None:
+            return value
+        from app.services.photos import validate_photo
+        return validate_photo(value)
+
+    @field_validator('email')
+    @classmethod
+    def normalize_email(cls, value):
+        value = value.strip().lower()
+        if value.count('@') != 1 or not all(value.split('@')) or any(c.isspace() for c in value):
+            raise ValueError('Enter a valid email address')
+        return value
+
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
     email: str = Field(min_length=3, max_length=150)
@@ -136,14 +155,19 @@ class PharmacistProfileBase(BaseModel):
     postal_code: str | None = Field(default=None, max_length=20)
 
 
+class EmployeeProfileUpdate(PharmacistProfileBase):
+    model_config = ConfigDict(extra='forbid')
+
+
 class PharmacistProfileRead(PharmacistProfileBase, ORMModel):
+    role: EmployeeRole
     id: int
     created_at: datetime
     updated_at: datetime
 
 
 class PasswordChange(BaseModel):
-    current_password: str | None = Field(default=None, min_length=12, max_length=128)
+    current_password: str | None = Field(default=None, min_length=1, max_length=128)
     new_password: str = Field(min_length=12, max_length=128)
     confirm_password: str = Field(min_length=12, max_length=128)
 
@@ -156,11 +180,14 @@ class PasswordChange(BaseModel):
 
 class LoginRequest(BaseModel):
     email: str = Field(min_length=3, max_length=150)
-    password: str = Field(min_length=12, max_length=128)
+    password: str = Field(min_length=1, max_length=128)
 
 
 class LoginResponse(BaseModel):
     success: bool = True
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: datetime
     profile: PharmacistProfileRead
 
 

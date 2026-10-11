@@ -4,3 +4,5 @@ __pycache__/
 .env
 temp.db
 .pytest_cache/
+*.db-wal
+*.db-shm
