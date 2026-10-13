@@ -6,8 +6,16 @@ def migrate_employee_table(engine):
     tables = inspect(engine).get_table_names()
     if 'pharmacist_profiles' not in tables and 'employee_table' not in tables:
         return
+    if engine.dialect.name == 'postgresql':
+        if 'pharmacist_profiles' in tables:
+            raise RuntimeError('Legacy PostgreSQL profiles require an explicit migration')
+        from app.models import Employee
+        columns = {c['name'] for c in inspect(engine).get_columns('employee_table')}
+        if not set(Employee.__table__.columns.keys()).issubset(columns):
+            raise RuntimeError('PostgreSQL employee schema requires an explicit migration')
+        return
     if engine.dialect.name != 'sqlite':
-        raise RuntimeError('Employee profile upgrade currently supports local SQLite only')
+        raise RuntimeError('Unsupported database')
     if 'pharmacist_profiles' in tables and 'employee_table' in tables:
         raise RuntimeError('Both profile tables exist; reconcile them before upgrading')
     with engine.connect() as connection:

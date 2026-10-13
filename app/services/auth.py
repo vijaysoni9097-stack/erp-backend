@@ -48,4 +48,9 @@ def get_current_profile(
     if profile is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session",
                             headers={"WWW-Authenticate": "Bearer"})
+    from app.config import get_settings
+    if get_settings().sync_enabled:
+        from app.services.cloud_sync import check_lease
+        check_lease(db, profile.id)
+    db.info['actor_id'] = profile.id
     return profile

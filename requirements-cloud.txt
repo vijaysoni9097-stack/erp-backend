@@ -1,0 +1,2 @@
+# Optional administration tools; not required for offline startup.
+psycopg[binary]==3.3.6

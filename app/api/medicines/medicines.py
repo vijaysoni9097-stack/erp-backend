@@ -1,4 +1,6 @@
+from app.services.sync_queue import queue_if_enabled
 from fastapi import Depends, HTTPException, status
+from app.models.sync import SyncIdentity
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -25,7 +27,7 @@ class MedicineAPI(BaseAPI):
     @staticmethod
     def get(search: str | None = None, low_stock_only: bool = False,
             db: Session = Depends(get_db)) -> list[Medicine]:
-        statement = select(Medicine).order_by(Medicine.name)
+        statement = select(Medicine).where(~Medicine.id.in_(select(SyncIdentity.local_id).where(SyncIdentity.entity=='medicines',SyncIdentity.deleted==True))).order_by(Medicine.name)
         if search:
             term = f"%{search.strip()}%"
             statement = statement.where(or_(Medicine.name.ilike(term), Medicine.generic_name.ilike(term), Medicine.sku.ilike(term)))
@@ -35,6 +37,9 @@ class MedicineAPI(BaseAPI):
 
     @staticmethod
     def post(payload: MedicineCreate, db: Session = Depends(get_db)) -> Medicine:
+        from app.config import get_settings
+        if get_settings().sync_enabled and payload.stock_quantity:
+            raise HTTPException(409, 'Receive and allocate cloud stock before selling on this device')
         if payload.supplier_id is not None:
             get_or_404(db, Supplier, payload.supplier_id, "Supplier")
         medicine = Medicine(**payload.model_dump())
@@ -44,6 +49,7 @@ class MedicineAPI(BaseAPI):
             if medicine.stock_quantity:
                 db.add(StockMovement(medicine_id=medicine.id, movement_type=StockMovementType.received,
                                      quantity_change=medicine.stock_quantity, note="Opening stock"))
+            queue_if_enabled(db, 'medicines', medicine)
             db.commit()
         except IntegrityError:
             db.rollback()
@@ -53,6 +59,11 @@ class MedicineAPI(BaseAPI):
 
     @staticmethod
     def post_stock(medicine_id: int, payload: StockAdjustment, db: Session = Depends(get_db)) -> Medicine:
+        from app.config import get_settings
+        if get_settings().sync_enabled:
+            raise HTTPException(409, 'Stock changes require online receipt/allocation in sync mode')
+        from app.database import lock_inventory
+        lock_inventory(db)
         medicine = get_or_404(db, Medicine, medicine_id, "Medicine")
         updated_quantity = medicine.stock_quantity + payload.quantity_change
         if updated_quantity < 0:

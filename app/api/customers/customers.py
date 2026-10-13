@@ -1,4 +1,6 @@
+from app.services.sync_queue import queue_if_enabled
 from fastapi import Depends, status
+from app.models.sync import SyncIdentity
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -18,7 +20,7 @@ class CustomerAPI(BaseAPI):
 
     @staticmethod
     def get(search: str | None = None, db: Session = Depends(get_db)) -> list[Customer]:
-        statement = select(Customer).order_by(Customer.full_name)
+        statement = select(Customer).where(~Customer.id.in_(select(SyncIdentity.local_id).where(SyncIdentity.entity=='customers',SyncIdentity.deleted==True))).order_by(Customer.full_name)
         if search:
             term = f"%{search.strip()}%"
             statement = statement.where(or_(Customer.full_name.ilike(term), Customer.phone.ilike(term)))
@@ -28,6 +30,7 @@ class CustomerAPI(BaseAPI):
     def post(payload: CustomerCreate, db: Session = Depends(get_db)) -> Customer:
         customer = Customer(**payload.model_dump())
         db.add(customer)
+        queue_if_enabled(db, 'customers', customer)
         db.commit()
         db.refresh(customer)
         return customer

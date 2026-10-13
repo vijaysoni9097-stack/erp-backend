@@ -178,6 +178,26 @@ class PasswordChange(BaseModel):
         return self
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=150)
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=128)
+    new_password: str = Field(min_length=12, max_length=128)
+    confirm_password: str = Field(min_length=12, max_length=128)
+
+    @model_validator(mode="after")
+    def passwords_match(self) -> "ResetPasswordRequest":
+        if self.new_password != self.confirm_password:
+            raise ValueError("New password and confirmation must match")
+        return self
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str = "If an account matches that email, a password reset link will be sent."
+
+
 class LoginRequest(BaseModel):
     email: str = Field(min_length=3, max_length=150)
     password: str = Field(min_length=1, max_length=128)

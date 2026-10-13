@@ -3,6 +3,9 @@
 from fastapi import FastAPI
 
 from app.api.auth.auth import AuthAPI
+from app.api.users import UsersAPI
+from app.api.sync import SyncAPI
+from app.api.stock_snapshot import StockSnapshotAPI
 from app.api.base import BaseAPI
 from app.api.customers.customers import CustomerAPI
 from app.api.dashboard.dashboard import DashboardAPI
@@ -17,6 +20,9 @@ API_CLASSES: tuple[type[BaseAPI], ...] = (
     HealthAPI,
     DashboardAPI,
     AuthAPI,
+    UsersAPI,
+    SyncAPI,
+    StockSnapshotAPI,
     SupplierAPI,
     MedicineAPI,
     CustomerAPI,

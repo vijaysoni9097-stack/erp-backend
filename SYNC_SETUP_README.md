@@ -1,0 +1,99 @@
+# Surya Pharmacy: device enrollment and sync
+
+## This installation
+
+**Activation completed on October 12, 2026:** the confirmed cloud login is linked, this Mac is enrolled, and `SYNC_ENABLED=true`. Sign out and sign in online after the backend reload, then start Sync from the UI. Enrollment did not upload medicines.
+
+- Local database: `temp.db` (SQLite). Keep it as the application database.
+- Supabase project: `nosqyzumgkripfqnqknw` (ERP-DB).
+- Pharmacy: Surya Pharmacy, ID `3a3f3ad9-ae5e-5828-bb6f-936068f05e00`.
+- Existing local login: `pharmacist@example.com`.
+- 564 suppliers are already in the cloud and have local UUID mappings.
+- 6,739 imported medicines are queued locally for this login, with zero opening stock. Another 66 source items lacked purchase details and were held for review.
+- Enrollment never uploads the medicine queue. You trigger the upload from the UI.
+
+## One-time account step
+
+1. Open https://supabase.com/dashboard/project/nosqyzumgkripfqnqknw/auth/users
+2. Select **Add user → Create new user**.
+3. Enter **pharmacist@example.com**, matching your local app login.
+4. Enter your **current local app password** privately. Do not paste it into chat or a README.
+5. Leave **Auto confirm user** selected and click **Create user**. This form does not send a confirmation email.
+
+This version of the application validates the password locally and with Supabase, so both must match. The enrollment script does not reset your password. If this cloud user already exists, do not create another one; verify that its login matches.
+
+## Device registration and activation
+
+Run from the backend project folder using its existing virtual environment:
+
+```sh
+.venv/bin/python scripts/enroll_sync_device.py
+```
+
+This prepares the employee profile and registers this Mac. It stores the device secret in the private `.env`, and only its SHA-256 digest in Supabase. Initial preparation keeps sync disabled. Re-running does not create a second device as long as `.env` is preserved.
+
+After creating the confirmed Auth user:
+
+```sh
+.venv/bin/python scripts/enroll_sync_device.py --activate
+```
+
+Activation links the cloud employee to that Auth user and sets `SYNC_ENABLED=true`. It fails without changing local sync configuration if the confirmed user is missing. It refuses to overwrite a conflicting or revoked device registration.
+
+## Start using sync
+
+1. Restart the FastAPI backend with your normal development startup command. Changes to `.env` require a restart.
+2. Sign out of the pharmacy app, then sign in with your existing email/password while online.
+3. Open the UI sync controls and select **Sync**.
+4. Monitor pending records and conflicts. Each backend sync run pushes at most 100 pending operations. This import requires at least 68 runs if all records succeed; automatic repetition depends on the UI.
+5. Check Supabase Table Editor → schema **erp** → **medicines** for uploaded rows.
+
+Restarting the backend clears in-memory cloud tokens; sign in online again to resume sync. Offline access expires after 24 hours without successful online verification.
+
+## Configuration reference
+
+The script configures these in the backend `.env`:
+
+```dotenv
+DATABASE_URL=sqlite:///./temp.db
+SUPABASE_PROJECT_URL=https://nosqyzumgkripfqnqknw.supabase.co
+SUPABASE_PUBLISHABLE_KEY=<project publishable key>
+SYNC_PHARMACY_ID=3a3f3ad9-ae5e-5828-bb6f-936068f05e00
+SYNC_DEVICE_ID=<this device UUID>
+SYNC_DEVICE_SECRET=<private random device secret>
+SYNC_ENABLED=true
+```
+
+Keep database-owner credentials and device secrets out of frontend code and Git. No service-role/secret API key is needed by the enrollment script; it uses the existing verified-TLS administration database connection. Do not copy the device ID/secret to another computer: enroll each installation separately.
+
+## Stock and Docker
+
+The imported records are a catalog using latest purchase details, not reconciled batch inventory. Their opening stock is zero. Stock receipts and allocations are separate cloud superadmin operations before offline sales can use inventory.
+
+Docker is needed only to access the original SQL Server backup database. SQLite and Supabase sync do not need that SQL Server container running.
+
+## Troubleshooting and recovery
+
+- **Sync is not enabled:** complete activation, then restart the backend.
+- **Cloud sign-in failed:** verify that the cloud user is confirmed and both login passwords match. Do not change only one password.
+- **Sign in online to start synchronization:** sign out and sign in again after a backend restart.
+- **Device/user not authorized:** verify the employee Auth link, pharmacy ID, and unrevoked device registration; do not regenerate secrets blindly.
+- **Pending count decreases slowly:** each run handles only 100 operations. Continue syncing and investigate reported conflicts.
+- **Pause cloud mode:** set `SYNC_ENABLED=false` in `.env` and restart the backend. This does not delete cloud records or the local queue.
+
+The script saves private `.env` backups in `backups/before-sync-config-*.env`. Database import backups are also in `backups/`. Never publish that folder. The medicine import review report is `backups/medicine-import/report.json`.
+
+## Surya stock snapshot (13 October 2026)
+
+Inventory → Stock Management now reads the local `surya_stock_snapshot` table through
+`/api/v1/inventory/source-stock`, replacing the demo rows. The snapshot contains all
+6,805 source items from the restored 10 October 2026 Surya Pharmacy backup:
+2,161 items with positive stock, 3 with negative stock and 17 without stock records.
+The net recorded quantity is 228,477. Negative and missing values are preserved.
+
+Surya `itemStock` has item totals without batch links. These quantities are reference
+stock, not cloud allocations or verified saleable batches. The page shows device
+availability separately; source stock is not uploaded by catalog synchronization.
+Refresh reloads the saved SQLite snapshot, not SQL Server. A new SQL Server export
+is needed to update the snapshot. `scripts/import_surya_stock.py` imports the private
+export at `backups/stock-import/surya-stock.json`, taking a SQLite backup first.

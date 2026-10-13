@@ -13,6 +13,8 @@ from app.services.settings import seed_settings
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Initialize the local database and default configuration during startup."""
+    from app.database import initialize_schema
+    initialize_schema()
     migrate_employee_table(engine)
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:

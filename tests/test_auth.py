@@ -4,7 +4,8 @@ import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from datetime import datetime, timedelta
+from unittest.mock import patch
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 
 _test_directory = TemporaryDirectory()
@@ -14,7 +15,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import inspect, select
 from app.database import Base, SessionLocal, engine
 from app.main import app
-from app.models import AuthSession, PharmacistProfile
+from app.models import AuthSession, PharmacistProfile, PasswordResetToken
 from app.services.security import hash_secret
 from app.services.settings import seed_settings
 from app.setup_local import provision_account
@@ -166,6 +167,94 @@ class AuthTests(unittest.TestCase):
             self.assertEqual(inspect(conn).get_foreign_keys('auth_sessions')[0]['referred_table'], 'employee_table')
             self.assertEqual(conn.exec_driver_sql('PRAGMA foreign_key_check').all(), [])
         legacy.dispose()
+
+    def request_reset(self, email='pharmacist@example.com'):
+        return self.client.post('/api/v1/auth/forgot-password', json={'email': email})
+
+    def complete_reset(self, token, password='ReplacementPassword123!'):
+        return self.client.post('/api/v1/auth/reset-password', json={
+            'token': token, 'new_password': password, 'confirm_password': password})
+
+    @patch('app.services.password_reset.send_reset_email')
+    def test_password_recovery(self, send):
+        from app.config import get_settings
+        settings = get_settings()
+        with patch.object(settings, 'smtp_host', 'smtp.example.com'), \
+             patch.object(settings, 'smtp_from_email', 'support@example.com'), \
+             patch.object(settings, 'password_reset_url', 'https://example.com/reset-password'):
+            headers = self.headers()
+            response = self.request_reset(' PHARMACIST@example.com ')
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(response.json(), self.request_reset('missing@example.com').json())
+            token = send.call_args.args[1]
+            self.request_reset()
+            self.assertEqual(send.call_count, 1)
+            with SessionLocal() as db:
+                reset = db.scalar(select(PasswordResetToken))
+                self.assertEqual(reset.token_hash, sha256(token.encode()).hexdigest())
+            self.assertEqual(self.complete_reset('x' * 43).status_code, 400)
+            self.assertEqual(self.complete_reset(token, 'short').status_code, 422)
+            self.assertEqual(self.complete_reset(token).status_code, 204)
+            self.assertEqual(self.complete_reset(token).status_code, 400)
+            self.assertEqual(self.client.get('/api/v1/auth/me', headers=headers).status_code, 401)
+            self.assertEqual(self.login().status_code, 401)
+            self.assertEqual(self.login(password='ReplacementPassword123!').status_code, 200)
+
+    @patch('app.services.password_reset.send_reset_email')
+    def test_reset_expiry_password_change_and_delivery_failure(self, send):
+        from app.config import get_settings
+        settings = get_settings()
+        with patch.object(settings, 'smtp_host', 'smtp.example.com'), \
+             patch.object(settings, 'smtp_from_email', 'support@example.com'), \
+             patch.object(settings, 'password_reset_url', 'https://example.com/reset-password'):
+            self.request_reset()
+            first = send.call_args.args[1]
+            with SessionLocal() as db:
+                row = db.scalar(select(PasswordResetToken))
+                row.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+                row.created_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=20)
+                db.commit()
+            self.assertEqual(self.complete_reset(first).status_code, 400)
+            self.request_reset()
+            second = send.call_args.args[1]
+            self.assertEqual(self.complete_reset(first).status_code, 400)
+            headers = self.headers()
+            self.client.post('/api/v1/settings/password', headers=headers, json={
+                'current_password': PASSWORD, 'new_password': 'ChangedPassword123!',
+                'confirm_password': 'ChangedPassword123!'})
+            self.assertEqual(self.complete_reset(second).status_code, 400)
+            with SessionLocal() as db:
+                db.scalar(select(PasswordResetToken)).created_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=2)
+                db.commit()
+            send.side_effect = OSError('Delivery failed')
+            self.assertEqual(self.request_reset().status_code, 202)
+            self.assertEqual(self.request_reset('missing@example.com').status_code, 202)
+
+    @patch('app.services.password_reset.smtplib.SMTP')
+    def test_reset_email_uses_tls_and_frontend_link(self, smtp):
+        from app.config import get_settings
+        from app.services.password_reset import send_reset_email
+        settings = get_settings()
+        with patch.object(settings, 'smtp_host', 'smtp.example.com'), \
+             patch.object(settings, 'smtp_from_email', 'support@example.com'), \
+             patch.object(settings, 'smtp_username', 'mail-user'), \
+             patch.object(settings, 'smtp_password', 'mail-secret'), \
+             patch.object(settings, 'smtp_starttls', True), \
+             patch.object(settings, 'password_reset_url', 'https://example.com/reset?lang=en&token=old'):
+            send_reset_email('pharmacist@example.com', 'new-token')
+        connection = smtp.return_value.__enter__.return_value
+        connection.starttls.assert_called_once()
+        connection.login.assert_called_once_with('mail-user', 'mail-secret')
+        message = connection.send_message.call_args.args[0]
+        self.assertEqual(message['To'], 'pharmacist@example.com')
+        self.assertIn('https://example.com/reset?lang=en&token=new-token', message.get_content())
+        self.assertNotIn('token=old', message.get_content())
+
+    def test_recovery_requires_configuration(self):
+        from app.config import get_settings
+        with patch.object(get_settings(), 'smtp_host', None):
+            self.assertEqual(self.request_reset().status_code, 503)
+            self.assertEqual(self.request_reset('missing@example.com').status_code, 503)
 
     def test_setup_cannot_replace_account(self):
         with SessionLocal() as db:

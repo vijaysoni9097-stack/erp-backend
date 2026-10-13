@@ -1,0 +1,40 @@
+# Free staging only. Supply testing secrets through Render, never in this file.
+services:
+  - type: web
+    name: pharmacy-erp-testing-api
+    runtime: docker
+    repo: https://github.com/vijaysoni9097-stack/erp-backend
+    branch: main
+    plan: free
+    autoDeployTrigger: commit
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SCHEMA
+        value: erp_app
+      - key: REQUIRE_POSTGRES
+        value: 'true'
+      - key: DEBUG
+        value: 'false'
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SYNC_ENABLED
+        value: 'false'
+  - type: web
+    name: pharmacy-erp-testing-ui
+    runtime: static
+    repo: https://github.com/vijaysoni9097-stack/erp
+    branch: feature/ui_0.2
+    autoDeployTrigger: commit
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: NODE_VERSION
+        value: 22.16.0
+      - key: VITE_API_BASE_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

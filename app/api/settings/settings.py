@@ -83,6 +83,8 @@ class SettingsAPI(BaseAPI):
     @staticmethod
     def put_profile(payload: EmployeeProfileUpdate, db: Session = Depends(get_db),
                     profile: PharmacistProfile = Depends(get_current_profile)):
+        from app.services.cloud_sync import require_local_identity_mode
+        require_local_identity_mode()
         duplicate = db.scalar(select(PharmacistProfile.id).where(
             func.lower(PharmacistProfile.email) == payload.email,
             PharmacistProfile.id != profile.id,
@@ -102,6 +104,8 @@ class SettingsAPI(BaseAPI):
     @staticmethod
     def post_password(payload: PasswordChange, db: Session = Depends(get_db),
                       profile: PharmacistProfile = Depends(get_current_profile)) -> None:
+        from app.services.cloud_sync import require_local_identity_mode
+        require_local_identity_mode()
         """Set the initial password or verify the current password before replacing it."""
         if profile.password_hash:
             if payload.current_password is None or not verify_secret(payload.current_password, profile.password_hash):

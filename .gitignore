@@ -2,7 +2,9 @@ __pycache__/
 *.py[cod]
 .venv/
 .env
+.env.hosting.local
 temp.db
 .pytest_cache/
 *.db-wal
 *.db-shm
+backups/

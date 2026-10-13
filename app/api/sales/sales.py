@@ -1,3 +1,4 @@
+from app.services.sync_queue import queue_if_enabled
 from decimal import Decimal
 
 from fastapi import Depends, HTTPException, status
@@ -35,6 +36,13 @@ class SaleAPI(BaseAPI):
     @staticmethod
     def post(payload: SaleCreate, db: Session = Depends(get_db)) -> Sale:
         """Atomically create a bill, decrement stock, and mark its prescription dispensed."""
+        from app.config import get_settings
+        if get_settings().sync_enabled and db.bind.dialect.name == 'sqlite':
+            from sqlalchemy import text
+            db.rollback()
+            db.execute(text('BEGIN IMMEDIATE'))
+        from app.database import lock_inventory
+        lock_inventory(db)
         if payload.customer_id is not None:
             get_or_404(db, Customer, payload.customer_id, "Customer")
         prescription = None
@@ -66,5 +74,6 @@ class SaleAPI(BaseAPI):
                                  quantity_change=-item.quantity, note=f"Sale #{sale.id}"))
         if prescription:
             prescription.status = PrescriptionStatus.dispensed
+        queue_if_enabled(db, 'sales', sale)
         db.commit()
         return db.scalar(select(Sale).options(selectinload(Sale.items)).where(Sale.id == sale.id))

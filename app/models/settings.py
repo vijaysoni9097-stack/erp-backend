@@ -38,7 +38,7 @@ class Employee(Base):
     professional_bio: Mapped[str | None] = mapped_column(Text())
     photo_data_url: Mapped[str | None] = mapped_column(Text())
 
-    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     first_name: Mapped[str] = mapped_column(String(100))
     last_name: Mapped[str] = mapped_column(String(100))
     email: Mapped[str] = mapped_column(String(150), unique=True, index=True)
@@ -75,6 +75,19 @@ class AuthSession(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now())
+
+
+class PasswordResetToken(Base):
+    """Single-use recovery credentials; raw tokens are never persisted."""
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("employee_table.id", ondelete="CASCADE"), unique=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    password_hash_at_issue: Mapped[str] = mapped_column(String(255))
+    expires_at: Mapped[datetime] = mapped_column(DateTime())
+    created_at: Mapped[datetime] = mapped_column(DateTime())
 
 
 class PharmacySettings(Base):

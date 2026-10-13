@@ -51,6 +51,11 @@ def seed_settings(db: Session) -> None:
             db.add(NotificationPreference(event_type=event_type))
             changed = True
     if changed:
+        db.flush()
+        if db.bind.dialect.name == 'postgresql':
+            from sqlalchemy import text
+            # The initial profile has an explicit ID; reserve it in its sequence.
+            db.execute(text("SELECT setval(pg_get_serial_sequence('employee_table','id'), GREATEST((SELECT MAX(id) FROM employee_table), nextval(pg_get_serial_sequence('employee_table','id'))))"))
         db.commit()
 
 

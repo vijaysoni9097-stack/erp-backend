@@ -34,6 +34,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--email', help='Email for the initial pharmacist account')
     args = parser.parse_args()
+    from app.database import initialize_schema
+    initialize_schema()
     migrate_employee_table(engine)
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:

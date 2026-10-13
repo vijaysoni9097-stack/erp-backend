@@ -10,6 +10,7 @@ from app.models.prescriptions import Prescription, PrescriptionStatus
 from app.models.sales import Sale, SaleItem, SaleStatus
 from app.models.settings import (
     AuthSession,
+    PasswordResetToken,
     Employee,
     EmployeeRole,
     NotificationEventType,
@@ -21,6 +22,7 @@ from app.models.suppliers import Supplier
 
 __all__ = [
     "AuthSession",
+    "PasswordResetToken",
     "Employee",
     "EmployeeRole",
     "Customer",
@@ -38,3 +40,6 @@ __all__ = [
     "StockMovementType",
     "Supplier",
 ]
+
+from app.models.sync import SyncIdentity, SyncOutbox, SyncState, OfflineLease
+from app.models.stock_snapshot import StockSnapshot
