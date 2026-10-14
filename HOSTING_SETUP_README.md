@@ -15,6 +15,16 @@ deployment and verification. The prepared Render backend form uses Free,
 Docker, Singapore, `/health`, and automatic deployment on commits. Its database
 connection still needs to be added, followed by the frontend and exact CORS URL.
 
+Render database access and deployment have been explicitly approved. The private
+upload file is `backups/render-testing.env` (ignored by Git). Chrome blocked the
+upload because the ChatGPT extension does not have "Allow access to file URLs"
+enabled. The connection has not been uploaded and no service has been deployed.
+
+Supabase's pooler ignored the initial startup `search_path` option. The application
+now sets it explicitly when each connection opens. Existing testing tables and
+enum types were moved into `erp_app`; no application tables remain in `public`,
+and neither `anon` nor `authenticated` has direct table access.
+
 Testing project reference: `wizlnubijmsjbolfxxox` (Sydney). Its session pooler is
 `aws-0-ap-southeast-2.pooler.supabase.com:5432`, database `postgres`, user
 `postgres.wizlnubijmsjbolfxxox`. Enter its database password only in the private,

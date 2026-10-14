@@ -18,6 +18,18 @@ if is_postgres:
     connect_args.update(options=f'-csearch_path={settings.database_schema}', prepare_threshold=None)
 engine = create_engine(database_url, connect_args=connect_args, pool_pre_ping=True)
 
+if is_postgres:
+    @event.listens_for(engine, "connect")
+    def configure_postgres(connection, _):
+        # Poolers may ignore startup options; set the schema on every connection.
+        previous_autocommit = connection.autocommit
+        connection.autocommit = True
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(f'SET SESSION search_path TO "{settings.database_schema}"')
+        finally:
+            connection.autocommit = previous_autocommit
+
 
 def initialize_schema():
     if is_postgres:
