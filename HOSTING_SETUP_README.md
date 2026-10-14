@@ -1,8 +1,19 @@
 # Team testing deployment — free hosting
 
-Status (13 October 2026): Render is connected to the application repositories.
-The separate Supabase Free project `pharmacy-erp-testing` is healthy. No service
-has been published and hosted login, data import and sync are not yet verified.
+Status (14 October 2026): Render is connected to the application repositories.
+Backend commit `7c2edd7` and frontend commit `3fbc015` have been pushed.
+The separate Supabase Free project `pharmacy-erp-testing` is healthy, and its
+private `erp_app` schema contains 565 suppliers, 6,740 medicines and 6,805
+reference-stock records, transferred with explicit user approval. Saleable
+medicine stock starts at zero. No customers, prescriptions, sales, original
+employee credentials or original sync sessions were copied.
+
+A separate test administrator login is stored in `.env.hosting.local` under
+`STAGING_LOGIN_EMAIL` and `STAGING_LOGIN_PASSWORD`. Never commit this file.
+No Render service has been published yet; hosted access and sync still require
+deployment and verification. The prepared Render backend form uses Free,
+Docker, Singapore, `/health`, and automatic deployment on commits. Its database
+connection still needs to be added, followed by the frontend and exact CORS URL.
 
 Testing project reference: `wizlnubijmsjbolfxxox` (Sydney). Its session pooler is
 `aws-0-ap-southeast-2.pooler.supabase.com:5432`, database `postgres`, user
