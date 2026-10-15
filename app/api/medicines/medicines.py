@@ -1,3 +1,4 @@
+from datetime import date, timedelta
 from app.services.sync_queue import queue_if_enabled
 from fastapi import Depends, HTTPException, status
 from app.models.sync import SyncIdentity
@@ -15,6 +16,7 @@ from app.schemas import MedicineCreate, MedicineRead, StockAdjustment, StockMove
 class MedicineAPI(BaseAPI):
     methods = ["GET", "POST"]
     routes = [
+        RouteDefinition("/api/v1/medicines/expiry-alerts", "expiry_alerts", "GET", tags=["Medicines"]),
         RouteDefinition("/api/v1/medicines", "get", "GET", response_model=list[MedicineRead], tags=["Medicines"]),
         RouteDefinition("/api/v1/medicines", "post", "POST", response_model=MedicineRead,
                         status_code=status.HTTP_201_CREATED, tags=["Medicines"]),
@@ -23,6 +25,21 @@ class MedicineAPI(BaseAPI):
         RouteDefinition("/api/v1/medicines/{medicine_id}/movements", "get_movements", "GET",
                         response_model=list[StockMovementRead], tags=["Medicines"]),
     ]
+
+    @staticmethod
+    def expiry_alerts(db: Session = Depends(get_db)):
+        from app.services.settings import get_pharmacy_preferences
+        preferences = get_pharmacy_preferences(db)
+        today = date.today()
+        cutoff = today + timedelta(days=preferences.expiry_alert_lead_days)
+        medicines = MedicineAPI.get(db=db) if preferences.expiry_alerts_enabled else []
+        items = [dict(id=m.id, name=m.name, batch_number=m.batch_number,
+                      expiry_date=m.expiry_date, stock_quantity=m.stock_quantity,
+                      days_remaining=(m.expiry_date-today).days)
+                 for m in medicines if m.expiry_date <= cutoff]
+        items.sort(key=lambda m: (m['expiry_date'], m['name'], m['id']))
+        return dict(enabled=preferences.expiry_alerts_enabled,
+                    lead_days=preferences.expiry_alert_lead_days, items=items)
 
     @staticmethod
     def get(search: str | None = None, low_stock_only: bool = False,
