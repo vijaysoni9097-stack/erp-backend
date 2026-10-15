@@ -1,94 +1,87 @@
 # Team testing deployment — free hosting
 
-Status (14 October 2026): Render is connected to the application repositories.
-Backend commit `7c2edd7` and frontend commit `3fbc015` have been pushed.
-The separate Supabase Free project `pharmacy-erp-testing` is healthy, and its
-private `erp_app` schema contains 565 suppliers, 6,740 medicines and 6,805
-reference-stock records, transferred with explicit user approval. Saleable
-medicine stock starts at zero. No customers, prescriptions, sales, original
-employee credentials or original sync sessions were copied.
+## Open the application
 
-A separate test administrator login is stored in `.env.hosting.local` under
-`STAGING_LOGIN_EMAIL` and `STAGING_LOGIN_PASSWORD`. Never commit this file.
-No Render service has been published yet; hosted access and sync still require
-deployment and verification. The prepared Render backend form uses Free,
-Docker, Singapore, `/health`, and automatic deployment on commits. Its database
-connection still needs to be added, followed by the frontend and exact CORS URL.
+- UI: https://pharmacy-erp-testing-ui.onrender.com
+- API: https://pharmacy-erp-testing-api.onrender.com
+- Health check: https://pharmacy-erp-testing-api.onrender.com/health
 
-Render database access and deployment have been explicitly approved. The private
-upload file is `backups/render-testing.env` (ignored by Git). Chrome blocked the
-upload because the ChatGPT extension does not have "Allow access to file URLs"
-enabled. The connection has not been uploaded and no service has been deployed.
+Status on 15 October 2026: both Render services are deployed. Hosted health,
+login, profile, suppliers, medicine search, reference stock and logout passed API
+checks. The exact frontend origin is allowed by CORS. The frontend login page
+was observed in Chrome. The final visual sign-in check remains unverified because
+browser automation became unavailable; API login succeeds.
 
-Supabase's pooler ignored the initial startup `search_path` option. The application
-now sets it explicitly when each connection opens. Existing testing tables and
-enum types were moved into `erp_app`; no application tables remain in `public`,
-and neither `anon` nor `authenticated` has direct table access.
+## Sign in
 
-Testing project reference: `wizlnubijmsjbolfxxox` (Sydney). Its session pooler is
-`aws-0-ap-southeast-2.pooler.supabase.com:5432`, database `postgres`, user
-`postgres.wizlnubijmsjbolfxxox`. Enter its database password only in the private,
-Git-ignored `.env.hosting.local` file. This file is for setup tooling, not the
-running local app; never replace the local `.env` with staging settings.
+Use `STAGING_LOGIN_EMAIL` and `STAGING_LOGIN_PASSWORD` from the private local
+`.env.hosting.local` file. This is a separate testing administrator account, not
+the local pharmacy password. Share only the test login with authorized testers;
+do not share the whole file, which also contains the database administrator
+password. No credentials are committed to Git or included in frontend variables.
 
-## Proposed setup
+## Automatic deployment
 
-- Render Static Site: React UI, built from `vijaysoni9097-stack/erp`.
-- Render Free Web Service: FastAPI from `vijaysoni9097-stack/erp-backend`.
-- A separate Supabase Free project: durable testing database and sync environment.
-- Automatic deployment from the selected Git branch after each push.
+- Backend repository: `vijaysoni9097-stack/erp-backend`, branch `main`.
+- Frontend repository: `vijaysoni9097-stack/erp`, branch `feature/ui_0.2`.
+- Push committed changes to the corresponding branch to trigger Render builds.
+  A local commit alone does not deploy until pushed.
+- Backend: Docker, Free, Singapore, one worker, health path `/health`.
+- Frontend: static site, Node 22.16.0, `npm ci && npm run build`, publish `dist`.
+- Frontend route rule: rewrite `/*` to `/index.html`.
+- Frontend variable: `VITE_API_BASE_URL=https://pharmacy-erp-testing-api.onrender.com/api/v1`.
+- Backend origin: `["https://pharmacy-erp-testing-ui.onrender.com"]`.
 
-Free Render services sleep after 15 minutes without traffic and take roughly a
-minute to wake. Their SQLite files do not survive restarts. Do not deploy the
-current SQLite database there. Free Render Postgres expires after 30 days, so it
-is not the proposed durable database. Supabase Free projects have quotas and can
-pause when inactive. Do not enable paid plans or paid overages for this setup.
+Render service IDs:
+- Backend: `srv-db7f59bbc2fs73evst5g`
+- Frontend: `srv-db7f5u25b2lc73fnm200`
 
-## Prepared changes
+## Testing database and records
 
-- Frontend accepts `VITE_API_BASE_URL` ending in `/api/v1`; local development
-  continues using the Vite proxy when unset.
-- Backend accepts `CORS_ORIGINS` as a JSON list of exact approved frontend URLs.
-- Container build excludes `.env`, SQLite files, backups and import exports.
-- PostgreSQL startup uses a separate `erp_app` schema. `REQUIRE_POSTGRES=true`
-  prevents accidental use of an ephemeral SQLite database on the hosted service.
-- Stock writes and cloud stock application share a PostgreSQL transaction lock.
-- `render.yaml` defines the free API and static UI, using existing backend `main`
-  and frontend `feature/ui_0.2` branches, with automatic deployment on pushes.
-- PostgreSQL smoke checks passed on an isolated local PostgreSQL 17 container:
-  initial startup, restart/login, protected APIs, CORS, employee IDs, and competing
-  sales without overselling. All 27 existing SQLite tests also passed.
-- Vercel configuration exists as an alternative but is not the selected free host.
+Supabase Free project `pharmacy-erp-testing`, reference `wizlnubijmsjbolfxxox`,
+Sydney. The private `erp_app` schema contains 565 suppliers, 6,740 medicines and
+6,805 reference-stock records, transferred with explicit user approval. There
+are no copied customers, prescriptions or sales. Original employee passwords,
+sessions, device identities and sync outbox were not copied.
 
-## Required before publication
+Saleable medicine stock starts at zero. Reference quantities are historical
+records, not saleable allocations. Stock changes made during testing persist in
+Supabase PostgreSQL across Render restarts and deployments.
 
-1. Connect Render and GitHub, selecting only the two application repositories.
-2. Create a separate free Supabase testing project; do not reuse the live pharmacy
-   device identity, session data, employee credentials or sync outbox.
-3. Initialize the testing database and import the approved catalog/stock data.
-   PostgreSQL startup and concurrent sales are verified; hosted data import and
-   end-to-end cloud sync still need verification against the separate project.
-4. Provision test users and a separate sync device. Seed approved catalog and
-   inventory test data without copying patient records or live sessions.
-5. Deploy the backend with its database connection and device secrets in backend
-   environment settings only. Never put these in VITE variables or Git.
-6. Build UI with `npm ci && npm run build`, publish `dist`, set
-   `VITE_API_BASE_URL=https://<backend-host>/api/v1` and rewrite `/*` to
-   `/index.html`. Use Node 22.12 or newer in the 22.x series.
-7. Configure the exact UI origin on the backend. Connect automatic deployments
-   to the selected branch in each repository.
-8. Verify login, role access, medicines, stock, uploads, conflict handling and
-   database persistence across redeploys before sharing the URL.
+Backend settings require PostgreSQL with `DATABASE_SCHEMA=erp_app` and
+`REQUIRE_POSTGRES=true`. Never substitute SQLite on Render's temporary disk.
+The pooler ignored the startup search-path option, so every application connection
+now sets its schema explicitly. Tables and enum types are in `erp_app`, no
+application tables remain in `public`, and API client roles have no direct
+application-table access. Keep this schema out of the exposed Data API schemas.
 
-The Dockerfile defaults to SQLite for local use; `render.yaml` overrides this
-with a required PostgreSQL connection. Do not remove `REQUIRE_POSTGRES=true`
-from the hosted configuration. Use a Supabase session-pooler connection with
-TLS. Keep `erp_app` out of the exposed Supabase API schemas. Cloud sync stays
-disabled until the testing pharmacy, user and device are enrolled.
+The approved connection is stored only in Render backend environment settings.
+Its local upload copy is `backups/render-testing.env`, excluded from Git.
+Do not replace the local development `.env` with the hosting configuration.
 
-Render Free blocks SMTP ports: password-recovery email will need an HTTPS email
-provider adapter before that workflow is available online. Login itself does
-not need SMTP. No hosted link or real cloud integration has been verified yet.
+## Remaining testing limitations
+
+- `SYNC_ENABLED=false`: the hosted app saves directly to PostgreSQL. The separate
+  offline-device sync workflow is not enrolled or verified in this test project.
+  It still requires cloud migrations, a confirmed test Auth user and test device
+  enrollment before enabling sync. Do not reuse the live pharmacy identity.
+- Password-recovery email is not configured. Render Free blocks common SMTP
+  ports; an HTTPS email provider adapter is needed for that workflow.
+- Browser-based end-to-end interaction, stock writes, role workflows and sync
+  conflicts still need team acceptance testing. API checks are not full UI QA.
+- Free web services sleep when inactive and can take about a minute to wake.
+  Supabase Free also has quotas and may pause inactive projects. No paid plan
+  was selected.
+
+## Verification
+
+All 27 backend tests pass. The frontend production build succeeds. Separate
+local PostgreSQL tests cover startup/restart, protected APIs, exact-origin CORS,
+employee ID generation and competing sales without overselling. Hosted records
+remain available after backend configuration redeploys.
+
+See `SYNC_SETUP_README.md` for the original local enrollment process; its live
+pharmacy identifiers are not the testing environment's configuration.
 
 References:
 - https://render.com/docs/free
