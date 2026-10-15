@@ -1,9 +1,10 @@
 """Cloud RPC transport. Device code uses user JWTs, never database-owner credentials."""
+import json
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import select, text, func
 from app.config import get_settings
 from app.models.sync import OfflineLease, SyncOutbox, SyncState, SyncIdentity
 from app.services.sync_queue import prepare_operation, acknowledge, apply_page, apply_allocations
@@ -96,28 +97,62 @@ def token_for(profile_id):
     return session['access_token']
 
 
+BATCH_SIZE = 200
+BATCH_BYTES = 1024 * 1024
+
+
+def upload_batch(db, actor_id, token):
+    # Include other actors when determining predecessors to preserve record order.
+    earliest=select(func.min(SyncOutbox.sequence)).where(
+        SyncOutbox.state.in_(['pending','conflict'])).group_by(SyncOutbox.cloud_id)
+    queued=db.scalars(select(SyncOutbox).where(
+        SyncOutbox.actor_id==actor_id,SyncOutbox.state=='pending',
+        SyncOutbox.sequence.in_(earliest)).order_by(SyncOutbox.sequence).limit(BATCH_SIZE)).all()
+    operations=[]; envelopes=[]; size=0
+    for operation in queued:
+        envelope=({'p_operation':operation.operation_id,'p_kind':'sale','p_payload':operation.payload}
+                  if operation.entity=='sales' else prepare_operation(db,operation))
+        encoded_size=len(json.dumps(envelope,ensure_ascii=True).encode('utf-8'))
+        if size+encoded_size>BATCH_BYTES:
+            if not operations: raise ValueError('A pending change exceeds the sync batch size limit.')
+            break
+        size+=encoded_size; operations.append(operation); envelopes.append(envelope)
+    if not operations: return 0
+    db.commit()  # Freeze every retry envelope before sending anything.
+    result=request('/rest/v1/rpc/erp_sync_push_batch',
+                   {'p_device':get_settings().sync_device_id,'p_operations':envelopes},token)
+    receipts=result.get('receipts') if isinstance(result,dict) else None
+    if not isinstance(receipts,list) or not 0<len(receipts)<=len(operations):
+        raise ValueError('Invalid cloud batch receipt. Pending changes are safe to retry.')
+    for index,receipt in enumerate(receipts):
+        value=receipt.get('result',{}) if isinstance(receipt,dict) else {}
+        if (not isinstance(value,dict) or receipt.get('operation_id')!=operations[index].operation_id
+                or value.get('status') not in ('applied','conflict')
+                or (value.get('status')=='conflict' and index!=len(receipts)-1)):
+            raise ValueError('Invalid cloud batch receipt. Pending changes are safe to retry.')
+        if value['status']=='applied' and operations[index].entity!='sales':
+            if not isinstance(value.get('record'),dict) or not isinstance(value['record'].get('version'),int):
+                raise ValueError('Invalid cloud record receipt.')
+    if len(receipts)<len(operations) and receipts[-1]['result']['status']!='conflict':
+        raise ValueError('Incomplete cloud batch receipt. Pending changes are safe to retry.')
+    for operation,receipt in zip(operations,receipts):
+        acknowledge(db,operation,receipt['result'])
+    db.commit()
+    return sum(receipt['result']['status']=='applied' for receipt in receipts)
+
+
 def synchronize(db,profile):
     settings=get_settings()
     if not settings.sync_enabled: raise HTTPException(409,'Sync is not enabled. Device enrollment is required.')
     if not _sync_lock.acquire(blocking=False): raise HTTPException(409,'Synchronization is already running')
     try:
         token=token_for(profile.id)
-        receipts=[]
-        queued=db.scalars(select(SyncOutbox).where(SyncOutbox.actor_id==profile.id,SyncOutbox.state=='pending').order_by(SyncOutbox.sequence).limit(20)).all()
-        for operation in queued:
-            if db.scalar(select(SyncOutbox).where(SyncOutbox.cloud_id==operation.cloud_id,SyncOutbox.sequence<operation.sequence,SyncOutbox.state.in_(['pending','conflict']))):
-                continue
-            if operation.entity=='sales':
-                body={'p_device':settings.sync_device_id,'p_operation':operation.operation_id,'p_kind':'sale','p_payload':operation.payload}
-                rpc='erp_stock_command'
-            else:
-                body={'p_device':settings.sync_device_id,**prepare_operation(db,operation)}
-                rpc='erp_sync_push'
-            db.commit()  # freeze retry envelope before network I/O
-            result=request('/rest/v1/rpc/'+rpc,body,token)
-            # Persist receipt immediately; stock quantities are not changed here.
-            acknowledge(db,operation,result); db.commit()
-            if result['status']=='conflict': break
+        uploaded=upload_batch(db,profile.id,token)
+        # Pull only after unresolved edits are cleared; otherwise our own echoed
+        # changes can collide with the remaining local queue.
+        if db.scalar(select(SyncOutbox.sequence).where(
+                SyncOutbox.state.in_(['pending','conflict'])).limit(1)) is not None:
+            return {'status':'uploading','uploaded':uploaded}
         while True:
             state=db.get(SyncState,1)
             cursor=state.cursor if state else 0

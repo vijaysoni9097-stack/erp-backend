@@ -20,7 +20,22 @@ the local pharmacy password. Share only the test login with authorized testers;
 do not share the whole file, which also contains the database administrator
 password. No credentials are committed to Git or included in frontend variables.
 
-## Automatic deployment
+## Create users and set passwords
+
+Sign in with the testing superadmin account, then open **User Management** in
+the sidebar (or `/users`). Enter the person's first and last names, email,
+unique professional license number, pharmacy name, role and initial password.
+Passwords must contain 12–128 characters. Select **Create User**; the person can
+then sign in with that email and password. Share the password privately.
+
+Use **Reset Password** beside another account to set and confirm a replacement.
+Resetting a password revokes that user's existing sessions. Change your own
+password in your profile's security settings. Passwords are stored as hashes
+and cannot be viewed or recovered. Only superadmins can administer accounts.
+These actions are available on this hosted installation with sync disabled;
+cloud-managed installations require separate cloud identity administration.
+
+## Automatic deployment details
 
 - Backend repository: `vijaysoni9097-stack/erp-backend`, branch `main`.
 - Frontend repository: `vijaysoni9097-stack/erp`, branch `feature/ui_0.2`.

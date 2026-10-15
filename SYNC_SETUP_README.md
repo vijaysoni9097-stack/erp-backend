@@ -97,3 +97,32 @@ availability separately; source stock is not uploaded by catalog synchronization
 Refresh reloads the saved SQLite snapshot, not SQL Server. A new SQL Server export
 is needed to update the snapshot. `scripts/import_surya_stock.py` imports the private
 export at `backups/stock-import/surya-stock.json`, taking a SQLite backup first.
+
+## Bulk uploads
+
+Sync now uploads up to 200 independent changes per request (up to 1 MiB of
+operation data), instead of sending one request per record. The Sync page keeps
+requesting batches until the queue is drained or a conflict needs attention.
+Changes to the same record remain ordered; cloud receipts are saved together.
+If the connection drops, retry Sync: operation IDs prevent duplicate writes or
+sales. Downloads start after unresolved local changes are cleared.
+
+The cloud requires migration `202610150001_bulk_sync.sql`, maintained in the
+frontend repository's `supabase/migrations` directory (a copy is under backend
+`migrations/cloud`). Apply it using the existing cloud migration runner before
+running the updated backend. Older clients remain compatible.
+
+Small uploads should be substantially faster. Full initial imports still depend
+on record count, cloud latency, download pages, and free-service wake-up time;
+a few seconds for the entire catalog is not guaranteed.
+
+Checks: `SYNC_ENABLED=false .venv/bin/python -m unittest discover -s tests -q`.
+Cloud integration checks in `scripts/test_cloud_sync.py` in the frontend repo
+use isolated fixtures and roll all changes back, including bulk retry,
+conflict, size-limit, authorization, and transaction rollback checks.
+
+Validation on 15 October 2026: all 33 local tests passed. The rollback-only
+Supabase integration test uploaded 200 synthetic supplier records in 2.01 seconds
+through the database RPC. This measures one upload batch, not HTTP transport,
+the full catalog, or subsequent downloads. Existing stock and permission tests
+also passed.
