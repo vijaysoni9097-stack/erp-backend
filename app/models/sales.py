@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 
-from sqlalchemy import DateTime, Enum as SqlEnum, ForeignKey, Numeric, func
+from sqlalchemy import DateTime, Enum as SqlEnum, ForeignKey, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -44,3 +44,12 @@ class SaleItem(Base):
     line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     sale: Mapped[Sale] = relationship(back_populates="items")
     medicine: Mapped["Medicine"] = relationship(back_populates="sale_items")
+
+
+class CheckoutReceipt(Base):
+    """Local request receipt: retrying checkout must not dispense twice."""
+    __tablename__ = 'checkout_receipts'
+    request_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    actor_id: Mapped[int] = mapped_column()
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    sale_id: Mapped[int] = mapped_column(ForeignKey('sales.id'))

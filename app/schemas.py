@@ -1,3 +1,4 @@
+from uuid import UUID
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -80,6 +81,14 @@ class SaleCreate(BaseModel):
     prescription_id: int | None = None
     tax_amount: Decimal = Field(default=Decimal("0"), ge=0)
     items: list[SaleItemCreate] = Field(min_length=1)
+
+
+class CheckoutCreate(SaleCreate):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    request_id: UUID
+    patient_name: str = Field(min_length=2, max_length=150)
+    prescribed_by: str = Field(min_length=2, max_length=150)
+
 
 
 class SaleItemRead(ORMModel):

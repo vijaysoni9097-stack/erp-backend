@@ -102,3 +102,22 @@ References:
 - https://render.com/docs/free
 - https://render.com/docs/deploys
 - https://supabase.com/pricing
+
+## Pharmacist dispensing workspace
+
+Pharmacist logins open `/dispense`. Pharmacists, admins and superadmins can also
+open **Dispensing** from the sidebar. Search available medicines by name, generic
+name, SKU or batch, add quantities, enter the patient name, and select or type
+the prescribing doctor's name. **Complete sale** records the patient,
+prescription and bill together and reduces stock atomically. It does not process
+an online payment. This initial checkout uses stored selling prices without an
+additional tax calculation.
+
+Only unexpired medicines with positive saleable stock are offered. Imported
+reference quantities do not become saleable inventory automatically. Receive or
+allocate stock first; no stock is fabricated for the new workspace.
+
+If a request times out, keep the page open and use **Retry / confirm this sale**.
+It reuses the same checkout reference to prevent duplicate billing. The new
+`checkout_receipts` table is created by the existing application startup schema
+initialization in the private application schema. No existing tables are altered.
