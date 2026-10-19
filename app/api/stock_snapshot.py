@@ -15,7 +15,7 @@ class StockSnapshotAPI(BaseAPI):
             return {'source': 'Surya Pharmacy', 'imported_at': None, 'items': []}
         rows = db.execute(text('''SELECT s.source_id, s.name, s.quantity,
             s.source_modified_on, s.imported_at, m.id medicine_id,
-            m.stock_quantity allocated_quantity
+            m.stock_quantity allocated_quantity, m.expiry_date
             FROM surya_stock_snapshot s
             LEFT JOIN medicines m ON m.sku=s.source_id ORDER BY s.name,s.source_id''')).mappings().all()
         return {'source': 'Surya Pharmacy (restored backup)',
