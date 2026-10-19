@@ -30,6 +30,7 @@ class Sale(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now())
     customer: Mapped["Customer | None"] = relationship(back_populates="sales")
     prescription: Mapped["Prescription | None"] = relationship(back_populates="sales")
+    payment: Mapped["SalePayment | None"] = relationship(uselist=False, cascade="all, delete-orphan")
     items: Mapped[list["SaleItem"]] = relationship(back_populates="sale", cascade="all, delete-orphan")
 
 
@@ -53,3 +54,13 @@ class CheckoutReceipt(Base):
     actor_id: Mapped[int] = mapped_column()
     payload_hash: Mapped[str] = mapped_column(String(64))
     sale_id: Mapped[int] = mapped_column(ForeignKey('sales.id'))
+
+
+class SalePayment(Base):
+    __tablename__ = 'sale_payments'
+    sale_id: Mapped[int] = mapped_column(ForeignKey('sales.id'), primary_key=True)
+    method: Mapped[str] = mapped_column(String(20))
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    tendered: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    change: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    reference: Mapped[str | None] = mapped_column(String(100))

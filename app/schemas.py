@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import UUID
 from datetime import date, datetime
 from decimal import Decimal
@@ -83,9 +84,36 @@ class SaleCreate(BaseModel):
     items: list[SaleItemCreate] = Field(min_length=1)
 
 
+class PaymentCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    method: Literal['cash', 'upi', 'card', 'bank_transfer']
+    tendered: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    reference: str | None = Field(default=None, max_length=100)
+    confirmed: bool
+
+    @model_validator(mode='after')
+    def validate_payment(self):
+        if not self.confirmed:
+            raise ValueError('Confirm payment received before completing the sale')
+        if self.method != 'cash' and not self.reference:
+            raise ValueError('Enter the payment transaction reference')
+        if self.method == 'cash' and self.reference:
+            raise ValueError('Cash payments do not need a transaction reference')
+        return self
+
+
+class PaymentRead(ORMModel):
+    method: str
+    amount: Decimal
+    tendered: Decimal
+    change: Decimal
+    reference: str | None
+
+
 class CheckoutCreate(SaleCreate):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     request_id: UUID
+    payment: PaymentCreate
     patient_name: str = Field(min_length=2, max_length=150)
     prescribed_by: str = Field(min_length=2, max_length=150)
 
@@ -109,6 +137,7 @@ class SaleRead(ORMModel):
     total_amount: Decimal
     created_at: datetime
     items: list[SaleItemRead]
+    payment: PaymentRead | None = None
 
 
 class DashboardRead(BaseModel):

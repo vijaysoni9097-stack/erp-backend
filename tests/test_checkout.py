@@ -19,7 +19,7 @@ class CheckoutTests(unittest.TestCase):
             db.add(m);db.commit();return m.id
 
     def payload(self,mid):
-        return dict(request_id=str(uuid4()),patient_name='Test Patient',prescribed_by='Dr Test',items=[dict(medicine_id=mid,quantity=2)])
+        return dict(request_id=str(uuid4()),patient_name='Test Patient',prescribed_by='Dr Test',payment=dict(method='cash',tendered='10.00',confirmed=True),items=[dict(medicine_id=mid,quantity=2)])
 
     def test_checkout_atomic_and_retry_safe(self):
         headers=self.headers();mid=self.seed();p=self.payload(mid)
@@ -70,3 +70,33 @@ class CheckoutTests(unittest.TestCase):
         self.assertEqual(result.status_code,201,result.text)
         with SessionLocal() as db:
             self.assertEqual([o.entity for o in db.scalars(select(SyncOutbox).order_by(SyncOutbox.sequence))],['customers','prescriptions','sales'])
+
+    def test_payment_validation_and_cash_change(self):
+        headers=self.headers();mid=self.seed();payload=self.payload(mid)
+        for payment in [dict(method='cash',tendered='1',confirmed=True),dict(method='upi',tendered='6.50',confirmed=True),dict(method='card',tendered='7',reference='terminal-1',confirmed=True),dict(method='cash',tendered='10',confirmed=False)]:
+            payload['payment']=payment
+            result=self.client.post('/api/v1/sales/checkout',headers=headers,json=payload)
+            self.assertEqual(result.status_code,422,result.text)
+        with SessionLocal() as db:
+            self.assertEqual(db.get(Medicine,mid).stock_quantity,5)
+            self.assertEqual(db.scalar(select(func.count()).select_from(Sale)),0)
+        payload['payment']=dict(method='cash',tendered='10',confirmed=True)
+        result=self.client.post('/api/v1/sales/checkout',headers=headers,json=payload)
+        self.assertEqual(result.status_code,201,result.text)
+        self.assertEqual(float(result.json()['payment']['change']),3.5)
+        self.assertEqual(float(result.json()['payment']['amount']),6.5)
+        replay=self.client.post('/api/v1/sales/checkout',headers=headers,json=payload)
+        self.assertEqual(replay.json()['payment'],result.json()['payment'])
+        listed=self.client.get('/api/v1/sales',headers=headers).json()
+        self.assertEqual(listed[0]['payment'],result.json()['payment'])
+
+    def test_digital_payment_reference_is_saved(self):
+        headers=self.headers()
+        for method in ['upi','card','bank_transfer']:
+            payload=self.payload(self.seed())
+            payload['payment']=dict(method=method,tendered='6.50',reference='TEST-TXN-123',confirmed=True)
+            result=self.client.post('/api/v1/sales/checkout',headers=headers,json=payload)
+            self.assertEqual(result.status_code,201,result.text)
+            self.assertEqual(result.json()['payment']['method'],method)
+            self.assertEqual(result.json()['payment']['reference'],'TEST-TXN-123')
+            self.assertEqual(float(result.json()['payment']['change']),0)

@@ -130,6 +130,9 @@ def enqueue_sale(db, sale, actor_id):
              'prescription_id':identity(db,'prescriptions',sale.prescription_id).cloud_id if sale.prescription_id else None,
              'items':[{'medicine_id':identity(db,'medicines',item.medicine_id).cloud_id,
                        'quantity':item.quantity,'unit_price':str(item.unit_price)} for item in items]}
+    if sale.payment:
+        payload['payment'] = {key: str(getattr(sale.payment, key)) if key in ('amount','tendered','change') else getattr(sale.payment,key)
+                              for key in ('method','amount','tendered','change','reference')}
     operation=SyncOutbox(operation_id=str(uuid4()),actor_id=actor_id,entity='sales',cloud_id=row.cloud_id,
                         payload=payload,state='pending')
     db.add(operation)
@@ -178,6 +181,10 @@ def apply_stock_change(db, change):
     sale=Sale(customer_id=local('customers',data.get('customer_id')),prescription_id=local('prescriptions',data.get('prescription_id')),
               status=SaleStatus(data['status']),subtotal=Decimal(data['subtotal']),tax_amount=Decimal(data['tax_amount']),
               total_amount=Decimal(data['total_amount']),created_at=datetime.fromisoformat(data['occurred_at']).replace(tzinfo=None))
+    if data.get('payment'):
+        from app.models.sales import SalePayment
+        payment = data['payment']
+        sale.payment = SalePayment(**{key: payment[key] for key in ('method','amount','tendered','change','reference')})
     db.add(sale); db.flush()
     db.add(SyncIdentity(entity='sales',local_id=sale.id,cloud_id=cloud_id,version=int(change['version']),deleted=False))
     for item in data['items']:

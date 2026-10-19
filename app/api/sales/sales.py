@@ -21,7 +21,7 @@ from app.models import (
     StockMovementType,
 )
 from app.schemas import SaleCreate, SaleRead, CheckoutCreate
-from app.models.sales import CheckoutReceipt
+from app.models.sales import CheckoutReceipt, SalePayment
 from app.models.sync import SyncIdentity
 from app.models import PharmacistProfile
 from app.services.auth import get_current_profile
@@ -95,6 +95,11 @@ class SaleAPI(BaseAPI):
                 raise HTTPException(422, 'An expired or removed medicine cannot be sold')
             if medicines[item.medicine_id].stock_quantity < item.quantity:
                 raise HTTPException(status_code=422, detail=f"Insufficient stock for {medicines[item.medicine_id].name}")
+        subtotal = sum((medicines[item.medicine_id].selling_price * item.quantity for item in payload.items), Decimal("0"))
+        if isinstance(payload, CheckoutCreate):
+            payment = payload.payment
+            if payment.tendered < subtotal or (payment.method != 'cash' and payment.tendered != subtotal):
+                raise HTTPException(422, 'Payment must cover the current bill total; digital payments must match it exactly')
         customer_id = payload.customer_id
         if isinstance(payload, CheckoutCreate):
             customer = Customer(full_name=payload.patient_name)
@@ -120,6 +125,10 @@ class SaleAPI(BaseAPI):
                                  quantity_change=-item.quantity, note=f"Sale #{sale.id}"))
         if prescription:
             prescription.status = PrescriptionStatus.dispensed
+        if isinstance(payload, CheckoutCreate):
+            sale.payment = SalePayment(method=payload.payment.method, amount=sale.total_amount,
+                tendered=payload.payment.tendered, change=payload.payment.tendered-sale.total_amount,
+                reference=payload.payment.reference)
         queue_if_enabled(db, 'sales', sale)
         if receipt_hash:
             db.add(CheckoutReceipt(request_id=str(payload.request_id), actor_id=db.info['actor_id'],

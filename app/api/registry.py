@@ -7,6 +7,7 @@ from app.api.users import UsersAPI
 from app.api.sync import SyncAPI
 from app.api.stock_snapshot import StockSnapshotAPI
 from app.api.base import BaseAPI
+from app.api.purchase_orders import PurchaseOrderAPI
 from app.api.customers.customers import CustomerAPI
 from app.api.dashboard.dashboard import DashboardAPI
 from app.api.health.health import HealthAPI
@@ -28,6 +29,7 @@ API_CLASSES: tuple[type[BaseAPI], ...] = (
     CustomerAPI,
     PrescriptionAPI,
     SaleAPI,
+    PurchaseOrderAPI,
     SettingsAPI,
 )
 
