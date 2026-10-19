@@ -79,7 +79,7 @@ class AuthAPI(BaseAPI):
                credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
                db: Session = Depends(get_db)) -> None:
         from app.services.cloud_sync import forget_session
-        forget_session(profile.id)
+        forget_session(profile.id, db)
         db.execute(delete(AuthSession).where(
             AuthSession.profile_id == profile.id,
             AuthSession.token_hash == sha256(credentials.credentials.encode()).hexdigest(),

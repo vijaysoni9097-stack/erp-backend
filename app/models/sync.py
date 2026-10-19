@@ -42,3 +42,10 @@ class OfflineLease(Base):
     cloud_employee_id: Mapped[str] = mapped_column(String(36))
     expires_at: Mapped[datetime] = mapped_column(DateTime())
     last_observed_at: Mapped[datetime] = mapped_column(DateTime())
+
+class CloudSession(Base):
+    """Installation-encrypted cloud session; never synchronized or returned by APIs."""
+    __tablename__ = 'cloud_sync_sessions'
+    profile_id: Mapped[int] = mapped_column(primary_key=True)
+    encrypted_session: Mapped[str] = mapped_column(Text())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(), default=datetime.utcnow)

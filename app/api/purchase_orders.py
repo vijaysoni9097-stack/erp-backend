@@ -78,6 +78,8 @@ class PurchaseOrderAPI(BaseAPI):
                        for item in payload.items]
         db.add(order)
         try:
+            from app.services.sync_queue import queue_if_enabled
+            queue_if_enabled(db, 'purchase_orders', order)
             db.commit()
         except IntegrityError:
             db.rollback()

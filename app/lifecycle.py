@@ -19,4 +19,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         seed_settings(db)
-    yield
+    from app.services.auto_sync import start, stop
+    start()
+    try:
+        yield
+    finally:
+        stop()

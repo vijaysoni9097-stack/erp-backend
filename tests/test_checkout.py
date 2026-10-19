@@ -69,7 +69,7 @@ class CheckoutTests(unittest.TestCase):
             result=self.client.post('/api/v1/sales/checkout',headers=headers,json=self.payload(mid))
         self.assertEqual(result.status_code,201,result.text)
         with SessionLocal() as db:
-            self.assertEqual([o.entity for o in db.scalars(select(SyncOutbox).order_by(SyncOutbox.sequence))],['customers','prescriptions','sales'])
+            self.assertEqual([o.entity for o in db.scalars(select(SyncOutbox).order_by(SyncOutbox.sequence))],['customers','prescriptions','medicines','sales'])
 
     def test_payment_validation_and_cash_change(self):
         headers=self.headers();mid=self.seed();payload=self.payload(mid)

@@ -2,7 +2,7 @@
 
 ## This installation
 
-**Activation completed on October 12, 2026:** the confirmed cloud login is linked, this Mac is enrolled, and `SYNC_ENABLED=true`. Sign out and sign in online after the backend reload, then start Sync from the UI. Enrollment did not upload medicines.
+**Activation completed on October 12, 2026:** the confirmed cloud login is linked, this Mac is enrolled, and `SYNC_ENABLED=true`. Sign out and sign in online after the backend reload, then synchronization starts automatically. Enrollment did not upload medicines.
 
 - Local database: `temp.db` (SQLite). Keep it as the application database.
 - Supabase project: `nosqyzumgkripfqnqknw` (ERP-DB).
@@ -44,11 +44,11 @@ Activation links the cloud employee to that Auth user and sets `SYNC_ENABLED=tru
 
 1. Restart the FastAPI backend with your normal development startup command. Changes to `.env` require a restart.
 2. Sign out of the pharmacy app, then sign in with your existing email/password while online.
-3. Open the UI sync controls and select **Sync**.
-4. Monitor pending records and conflicts. Each backend sync run pushes at most 100 pending operations. This import requires at least 68 runs if all records succeed; automatic repetition depends on the UI.
+3. Saving changes wakes the backend worker automatically. Open Synchronization only to inspect status or resolve conflicts.
+4. The worker drains batches of up to 200 operations and retries temporary connection failures automatically, even with the browser closed. Keep the backend running.
 5. Check Supabase Table Editor → schema **erp** → **medicines** for uploaded rows.
 
-Restarting the backend clears in-memory cloud tokens; sign in online again to resume sync. Offline access expires after 24 hours without successful online verification.
+After the first online sign-in following this upgrade, cloud sessions are stored encrypted using the installation device secret and restored across backend restarts. Logging out removes the remembered session. Offline access expires after 24 hours without successful online verification.
 
 ## Configuration reference
 
@@ -76,9 +76,9 @@ Docker is needed only to access the original SQL Server backup database. SQLite 
 
 - **Sync is not enabled:** complete activation, then restart the backend.
 - **Cloud sign-in failed:** verify that the cloud user is confirmed and both login passwords match. Do not change only one password.
-- **Sign in online to start synchronization:** sign out and sign in again after a backend restart.
+- **Sign in online to start synchronization:** sign out and sign in again once after upgrading, or when access has expired or been revoked.
 - **Device/user not authorized:** verify the employee Auth link, pharmacy ID, and unrevoked device registration; do not regenerate secrets blindly.
-- **Pending count decreases slowly:** each run handles only 100 operations. Continue syncing and investigate reported conflicts.
+- **Pending count decreases slowly:** batches drain automatically. Investigate reported conflicts or connection errors.
 - **Pause cloud mode:** set `SYNC_ENABLED=false` in `.env` and restart the backend. This does not delete cloud records or the local queue.
 
 The script saves private `.env` backups in `backups/before-sync-config-*.env`. Database import backups are also in `backups/`. Never publish that folder. The medicine import review report is `backups/medicine-import/report.json`.
@@ -101,10 +101,10 @@ export at `backups/stock-import/surya-stock.json`, taking a SQLite backup first.
 ## Bulk uploads
 
 Sync now uploads up to 200 independent changes per request (up to 1 MiB of
-operation data), instead of sending one request per record. The Sync page keeps
+operation data), instead of sending one request per record. The backend worker keeps
 requesting batches until the queue is drained or a conflict needs attention.
 Changes to the same record remain ordered; cloud receipts are saved together.
-If the connection drops, retry Sync: operation IDs prevent duplicate writes or
+If the connection drops, automatic retries resume: operation IDs prevent duplicate writes or
 sales. Downloads start after unresolved local changes are cleared.
 
 The cloud requires migration `202610150001_bulk_sync.sql`, maintained in the
@@ -126,3 +126,7 @@ Supabase integration test uploaded 200 synthetic supplier records in 2.01 second
 through the database RPC. This measures one upload batch, not HTTP transport,
 the full catalog, or subsequent downloads. Existing stock and permission tests
 also passed.
+
+## Automatic business synchronization
+
+Migration `202610190001_automatic_business_sync.sql` adds purchase orders and shared pharmacy/notification preferences. Existing unmapped purchase orders are queued for their creating user. Missing supplier/customer/medicine/prescription parents are queued before dependent records. Purchase orders never change inventory. Printer settings, credentials and identity administration keep their separate security rules. Install requirements before restarting the backend. Hosted PostgreSQL mode saves directly to the cloud; do not enable device synchronization there without separate enrollment.

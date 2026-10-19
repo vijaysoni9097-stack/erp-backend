@@ -9,7 +9,7 @@ from app.config import get_settings
 from app.models.sync import OfflineLease, SyncOutbox, SyncState, SyncIdentity
 from app.services.sync_queue import prepare_operation, acknowledge, apply_page, apply_allocations
 
-_sessions = {}  # Cloud tokens stay in process memory. Restart requires online sign-in to sync.
+_sessions = {}  # Hot cache; refresh sessions are encrypted in installation-local storage.
 _session_lock = Lock()
 _sync_lock = Lock()
 
@@ -73,28 +73,47 @@ def login(db,profile,password):
         session=request('/auth/v1/token?grant_type=password',{'email':profile.email,'password':password})
         page=request('/rest/v1/rpc/erp_sync_pull',{'p_device':get_settings().sync_device_id,'p_cursor':0},session['access_token'])
         save_lease(db,profile,page)
+        from app.services.sync_credentials import save
+        save(db, profile.id, session)
         with _session_lock: _sessions[profile.id]=session
+        from app.services.auto_sync import notify
+        notify(profile.id, force=True)
     except HTTPException as error:
         if error.status_code!=503:
-            with _session_lock: _sessions.pop(profile.id,None)
+            forget_session(profile.id, db)
             lease=db.get(OfflineLease,profile.id)
             if lease: db.delete(lease); db.commit()
             raise
         check_lease(db,profile.id)
 
 
+def _remembered(profile_id, db=None):
+    from app.services.sync_credentials import load
+    if db is not None: return load(db, profile_id)
+    from app.database import SessionLocal
+    with SessionLocal() as session_db: return load(session_db, profile_id)
+
+
 def has_session(profile_id):
-    with _session_lock: return profile_id in _sessions
+    with _session_lock:
+        if profile_id in _sessions: return True
+    return _remembered(profile_id) is not None
 
 
-def token_for(profile_id):
-    with _session_lock: session=_sessions.get(profile_id)
-    if not session: raise HTTPException(409,'Sign in online to start cloud synchronization on this device.')
-    # Refresh before expiry, without persisting cloud tokens to the local database.
-    if session.get('expires_at',0)<datetime.now(timezone.utc).timestamp()+60:
-        session=request('/auth/v1/token?grant_type=refresh_token',{'refresh_token':session['refresh_token']})
-        with _session_lock: _sessions[profile_id]=session
-    return session['access_token']
+def token_for(profile_id, db=None):
+    # Serialize refresh-token rotation, including concurrent stock commands.
+    with _session_lock:
+        session = _sessions.get(profile_id) or _remembered(profile_id, db)
+        if not session: raise HTTPException(409, 'Sign in once to authorize automatic cloud synchronization on this device.')
+        if session.get('expires_at', 0) < datetime.now(timezone.utc).timestamp() + 60:
+            session = request('/auth/v1/token?grant_type=refresh_token', {'refresh_token': session['refresh_token']})
+            from app.services.sync_credentials import save
+            if db is not None: save(db, profile_id, session)
+            else:
+                from app.database import SessionLocal
+                with SessionLocal() as session_db: save(session_db, profile_id, session)
+        _sessions[profile_id] = session
+        return session['access_token']
 
 
 BATCH_SIZE = 200
@@ -146,7 +165,7 @@ def synchronize(db,profile):
     if not settings.sync_enabled: raise HTTPException(409,'Sync is not enabled. Device enrollment is required.')
     if not _sync_lock.acquire(blocking=False): raise HTTPException(409,'Synchronization is already running')
     try:
-        token=token_for(profile.id)
+        token=token_for(profile.id, db)
         uploaded=upload_batch(db,profile.id,token)
         # Pull only after unresolved edits are cleared; otherwise our own echoed
         # changes can collide with the remaining local queue.
@@ -172,7 +191,7 @@ def synchronize(db,profile):
         if isinstance(error,HTTPException) and error.status_code==401:
             lease=db.get(OfflineLease,profile.id)
             if lease: db.delete(lease)
-            with _session_lock: _sessions.pop(profile.id,None)
+            forget_session(profile.id, db)
         state=db.get(SyncState,1)
         if state is None: state=SyncState(id=1,cursor=0); db.add(state)
         state.last_error=error.detail if isinstance(error,HTTPException) else str(error)
@@ -187,5 +206,12 @@ def require_local_identity_mode():
         raise HTTPException(409,'This account is cloud-managed. Cloud account administration must be configured before changing identity or credentials.')
 
 
-def forget_session(profile_id):
-    with _session_lock: _sessions.pop(profile_id,None)
+def forget_session(profile_id, db=None):
+    with _session_lock: _sessions.pop(profile_id, None)
+    from app.services.sync_credentials import remove
+    if db is not None: remove(db, profile_id)
+    else:
+        from app.database import SessionLocal
+        with SessionLocal() as session_db:
+            remove(session_db, profile_id)
+            session_db.commit()

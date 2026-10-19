@@ -20,6 +20,9 @@ class StockCommand(BaseModel):
     kind: Literal['receive','allocate']
     payload: dict
 
+class WakeRequest(BaseModel):
+    force: bool = False
+
 class Resolution(BaseModel):
     choice: Literal['keep_local','accept_cloud']
 
@@ -29,6 +32,7 @@ class SyncAPI(BaseAPI):
         RouteDefinition('/api/v1/sync/status','get_status','GET',tags=['Sync']),
         RouteDefinition('/api/v1/sync/reconnect','reconnect','POST',tags=['Sync']),
         RouteDefinition('/api/v1/sync/run','run','POST',tags=['Sync']),
+        RouteDefinition('/api/v1/sync/wake','wake','POST',status_code=202,tags=['Sync']),
         RouteDefinition('/api/v1/sync/stock','stock','POST',tags=['Sync']),
         RouteDefinition('/api/v1/sync/conflicts/{operation_id}','resolve','POST',tags=['Sync']),
     ]
@@ -38,7 +42,9 @@ class SyncAPI(BaseAPI):
         pending=db.scalar(select(func.count()).select_from(SyncOutbox).where(SyncOutbox.actor_id==profile.id,SyncOutbox.state=='pending'))
         conflicts=db.scalars(select(SyncOutbox).where(SyncOutbox.actor_id==profile.id,SyncOutbox.state=='conflict')).all()
         from app.services.cloud_sync import has_session
-        return dict(connected=has_session(profile.id),enabled=get_settings().sync_enabled,device_id=get_settings().sync_device_id,
+        direct_cloud = db.get_bind().dialect.name == 'postgresql' and not get_settings().sync_enabled
+        return dict(connected=direct_cloud or has_session(profile.id),enabled=get_settings().sync_enabled,automatic=direct_cloud or get_settings().sync_enabled,
+                    mode='cloud_database' if direct_cloud else 'device_sync' if get_settings().sync_enabled else 'local_only',device_id=get_settings().sync_device_id,
                     pending=pending,conflicts=[{'operation_id':o.operation_id,'entity':o.entity,'message':o.error} for o in conflicts],
                     last_synced_at=state.last_synced_at if state else None,error=state.last_error if state else None,
                     lease_expires_at=lease.expires_at if lease else None)
@@ -52,13 +58,18 @@ class SyncAPI(BaseAPI):
         if state: state.last_error=None; db.commit()
         return {'status':'connected'}
     @staticmethod
+    def wake(payload:WakeRequest,profile=Depends(get_current_profile)):
+        from app.services.auto_sync import notify
+        notify(profile.id, force=payload.force)
+        return {'status':'scheduled' if get_settings().sync_enabled else 'not_required'}
+    @staticmethod
     def run(profile=Depends(get_current_profile),db:Session=Depends(get_db)):
         return synchronize(db,profile)
     @staticmethod
     def stock(payload:StockCommand,profile=Depends(get_current_profile),db:Session=Depends(get_db)):
         if not get_settings().sync_enabled: raise HTTPException(409,'Device enrollment is required')
         if profile.role!='superadmin': raise HTTPException(403,'Superadmin access required')
-        result=request('/rest/v1/rpc/erp_stock_command',{'p_device':get_settings().sync_device_id,'p_operation':payload.operation_id,'p_kind':payload.kind,'p_payload':payload.payload},token_for(profile.id))
+        result=request('/rest/v1/rpc/erp_stock_command',{'p_device':get_settings().sync_device_id,'p_operation':payload.operation_id,'p_kind':payload.kind,'p_payload':payload.payload},token_for(profile.id, db))
         return result
     @staticmethod
     def resolve(operation_id:str,payload:Resolution,profile=Depends(get_current_profile),db:Session=Depends(get_db)):
@@ -72,5 +83,6 @@ class SyncAPI(BaseAPI):
             affected=db.scalars(select(SyncOutbox).where(SyncOutbox.cloud_id==operation.cloud_id,SyncOutbox.state.in_(['pending','conflict']))).all()
             if any(o.actor_id!=profile.id for o in affected): raise HTTPException(409,'Another local user has pending edits to this record')
             for row in affected: row.state='discarded'
+        db.info['wake_sync_actor'] = profile.id
         db.commit()
-        return {'status':'resolved','message':'Run synchronization to apply the resolution.'}
+        return {'status':'resolved','message':'Automatic synchronization will apply the resolution.'}
