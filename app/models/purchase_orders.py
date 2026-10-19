@@ -34,3 +34,22 @@ class PurchaseOrderItem(Base):
     quantity: Mapped[int] = mapped_column(Integer())
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+
+
+class PurchaseReceipt(Base):
+    __tablename__ = 'purchase_receipts'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(36), unique=True)
+    request_hash: Mapped[str] = mapped_column(String(64))
+    order_id: Mapped[int] = mapped_column(ForeignKey('purchase_orders.id'), index=True)
+    created_by: Mapped[int] = mapped_column(Integer())
+    created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now())
+    items: Mapped[list['PurchaseReceiptItem']] = relationship(cascade='all, delete-orphan')
+
+
+class PurchaseReceiptItem(Base):
+    __tablename__ = 'purchase_receipt_items'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    receipt_id: Mapped[int] = mapped_column(ForeignKey('purchase_receipts.id'))
+    order_item_id: Mapped[int] = mapped_column(ForeignKey('purchase_order_items.id'), index=True)
+    quantity: Mapped[int] = mapped_column(Integer())

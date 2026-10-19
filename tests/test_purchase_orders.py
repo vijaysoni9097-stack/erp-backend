@@ -88,3 +88,48 @@ class PurchaseOrderTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201, response.text)
         self.assertEqual(response.json()['total_amount'], '0.30')
         self.assertEqual(self.client.get('/api/v1/purchase-orders/999999', headers=headers).status_code, 404)
+
+    def test_receiving_partial_final_and_retry(self):
+        supplier, medicine = self.seed(); headers = self.headers()
+        order = self.client.post('/api/v1/purchase-orders', json=self.payload(supplier, medicine), headers=headers).json()
+        pending = self.client.get('/api/v1/purchase-orders/pending-receipt', headers=headers).json()
+        self.assertEqual(pending[0]['items'][0]['remaining_quantity'], 3)
+        payload = dict(request_id=str(uuid4()), items=[dict(order_item_id=order['items'][0]['id'], quantity=2)])
+        url = f"/api/v1/purchase-orders/{order['id']}/receipts"
+        response = self.client.post(url, json=payload, headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['status'], 'partially_received')
+        self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 200)
+        with SessionLocal() as db:
+            self.assertEqual(db.get(Medicine, medicine).stock_quantity, 9)
+            self.assertEqual(db.scalar(select(func.count()).select_from(StockMovement)), 1)
+        pending = self.client.get('/api/v1/purchase-orders/pending-receipt', headers=headers).json()
+        self.assertEqual(pending[0]['items'][0]['remaining_quantity'], 1)
+        payload['items'][0]['quantity'] = 1
+        self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 409)
+        payload['request_id'] = str(uuid4())
+        self.assertEqual(self.client.post(url, json=payload, headers=headers).json()['status'], 'received')
+        self.assertEqual(self.client.get('/api/v1/purchase-orders/pending-receipt', headers=headers).json(), [])
+        with SessionLocal() as db:
+            self.assertEqual(db.get(Medicine, medicine).stock_quantity, 10)
+
+    def test_receipt_validation_and_short_final_delivery(self):
+        supplier, medicine = self.seed(); headers = self.headers()
+        order = self.client.post('/api/v1/purchase-orders', json=self.payload(supplier, medicine), headers=headers).json()
+        url = f"/api/v1/purchase-orders/{order['id']}/receipts"
+        payload = dict(request_id=str(uuid4()), items=[dict(order_item_id=order['items'][0]['id'], quantity=0)])
+        self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 422)
+        payload['items'][0] = dict(order_item_id=999999, quantity=2)
+        self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 422)
+        with SessionLocal() as db:
+            self.assertEqual(db.get(Medicine, medicine).stock_quantity, 7)
+        payload['items'][0] = dict(order_item_id=order['items'][0]['id'], quantity=1)
+        payload['close_order'] = True
+        self.assertEqual(self.client.post(url, json=payload, headers=headers).json()['status'], 'received')
+        snapshot = self.client.get('/api/v1/inventory/source-stock', headers=headers)
+        self.assertEqual(snapshot.status_code, 200, snapshot.text)
+        self.assertEqual(snapshot.json()['items'][0]['allocated_quantity'], 8)
+        medicines = self.client.get('/api/v1/medicines', headers=headers).json()
+        self.assertEqual(medicines[0]['stock_quantity'], 8)
+        payload['request_id'] = str(uuid4())
+        self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 409)

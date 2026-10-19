@@ -185,3 +185,19 @@ its sales have been reconciled.
 ## Device enrollment guide
 
 [Device enrollment and sync setup](SYNC_SETUP_README.md) explains account creation, this Mac’s registration, activation, and UI sync.
+
+### Receive stock from a purchase order
+
+Stock Management now has **Add Stock** in the frontend at `/Users/vijaysoni/git/erp`.
+Select a pending PO, review all lines, and edit **Receive now** quantities for this
+ delivery (not the final inventory balance). Zero means undelivered. Original PO
+quantities and prices remain unchanged. Partial receipts leave the PO pending;
+**Final delivery** closes a short shipment. Quantities above the ordered amount
+are accepted as delivery corrections.
+
+- `GET /api/v1/purchase-orders/pending-receipt` returns pending POs with received and remaining quantities on every line.
+- `POST /api/v1/purchase-orders/{id}/receipts` accepts a UUID `request_id`, every PO line as `{order_item_id, quantity}`, and optional `close_order`.
+- Reuse the same request ID and payload when retrying an unconfirmed save. Receipts update medicine stock and its movement ledger atomically; inventory refreshes after success.
+- New receipt tables are created by the existing startup schema initialization. No existing PO columns change.
+- Local/hosted database receiving is supported when `SYNC_ENABLED=false`. Sync devices remain blocked from direct receipt because their saleable stock is controlled by cloud allocations. Cloud receipt RPC integration is still required for that mode.
+- Existing `pending_approval` POs are selectable because a separate approval workflow has not yet been implemented.

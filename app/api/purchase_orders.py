@@ -3,7 +3,7 @@ from datetime import date
 from decimal import Decimal
 from hashlib import sha256
 from fastapi import Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from app.api.base import BaseAPI, RouteDefinition
@@ -11,7 +11,8 @@ from app.database import get_db
 from app.models import Medicine, Supplier
 from app.models.sync import SyncIdentity
 from app.models.purchase_orders import PurchaseOrder, PurchaseOrderItem
-from app.schemas_purchase_orders import PurchaseOrderCreate, PurchaseOrderRead
+from app.schemas_purchase_orders import PurchaseOrderCreate, PurchaseOrderRead, ReceiptCreate
+from app.services.purchase_receipts import pending_receipt, receive
 from app.services.auth import get_current_profile
 
 
@@ -29,6 +30,8 @@ def replay(order, actor, fingerprint):
 class PurchaseOrderAPI(BaseAPI):
     methods = ['GET', 'POST']
     routes = [
+        RouteDefinition('/api/v1/purchase-orders/pending-receipt', 'pending_receipt', 'GET', tags=['Purchase Orders']),
+        RouteDefinition('/api/v1/purchase-orders/{order_id}/receipts', 'receive', 'POST', response_model=PurchaseOrderRead, tags=['Purchase Orders']),
         RouteDefinition('/api/v1/purchase-orders', 'get', 'GET', response_model=list[PurchaseOrderRead], tags=['Purchase Orders']),
         RouteDefinition('/api/v1/purchase-orders', 'post', 'POST', response_model=PurchaseOrderRead, status_code=201, tags=['Purchase Orders']),
         RouteDefinition('/api/v1/purchase-orders/{order_id}', 'detail', 'GET', response_model=PurchaseOrderRead, tags=['Purchase Orders']),
@@ -89,3 +92,6 @@ class PurchaseOrderAPI(BaseAPI):
             raise HTTPException(409, 'Supplier or medicine changed. Refresh the catalog before retrying.')
         db.refresh(order)
         return order
+
+    pending_receipt = staticmethod(pending_receipt)
+    receive = staticmethod(receive)

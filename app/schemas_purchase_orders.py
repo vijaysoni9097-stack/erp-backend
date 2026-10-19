@@ -53,3 +53,24 @@ class PurchaseOrderRead(BaseModel):
     total_amount: Decimal
     created_at: datetime
     items: list[PurchaseItemRead]
+
+
+class ReceiptItemCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    order_item_id: int = Field(gt=0)
+    quantity: int = Field(ge=0, le=2147483647, strict=True)
+
+
+class ReceiptCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    request_id: UUID
+    items: list[ReceiptItemCreate] = Field(min_length=1, max_length=100)
+    close_order: bool = False
+
+    @model_validator(mode='after')
+    def validate_items(self):
+        if len({item.order_item_id for item in self.items}) != len(self.items):
+            raise ValueError('Each order item must appear only once')
+        if not any(item.quantity for item in self.items):
+            raise ValueError('Receive at least one unit')
+        return self
