@@ -1,5 +1,6 @@
 """User-management API tests using the isolated auth test database."""
 import unittest
+from unittest.mock import patch
 import test_auth as auth
 from test_auth import SessionLocal, PASSWORD
 from app.models import PharmacistProfile, PasswordResetToken
@@ -25,6 +26,16 @@ class UserAdminTests(unittest.TestCase):
                        password=PASSWORD)
         payload.update(changes)
         return self.client.post('/api/v1/users', headers=headers, json=payload)
+
+    def test_welcome_failure_keeps_user_and_duplicate_does_not_email(self):
+        headers = self.admin_headers()
+        with patch('app.services.welcome_email.send_welcome_email', return_value='failed') as send:
+            response = self.create(headers)
+            self.assertEqual(response.status_code, 201)
+            self.assertEqual(response.json()['welcome_email_status'], 'failed')
+            self.assertEqual(self.create(headers).status_code, 409)
+            send.assert_called_once()
+        self.assertEqual(len(self.client.get('/api/v1/users', headers=headers).json()), 2)
 
     def test_permissions(self):
         routes = [('get', '/api/v1/users', None), ('post', '/api/v1/users', {}),

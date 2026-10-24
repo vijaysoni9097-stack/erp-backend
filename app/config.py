@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     smtp_from_email: str | None = None
     smtp_starttls: bool = True
+    smtp_cc_email: str | None = None
+    user_login_url: str | None = None
     password_reset_url: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

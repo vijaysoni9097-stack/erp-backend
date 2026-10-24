@@ -35,6 +35,10 @@ class UserRead(BaseModel):
     role: EmployeeRole
 
 
+class UserCreated(UserRead):
+    welcome_email_status: str
+
+
 def superadmin(profile=Depends(get_current_profile)):
     if profile.role != EmployeeRole.superadmin:
         raise HTTPException(403, 'Superadmin access required')
@@ -54,7 +58,7 @@ class UsersAPI(BaseAPI):
     methods = ['GET', 'POST', 'DELETE']
     routes = [
         RouteDefinition('/api/v1/users', 'list_users', 'GET', response_model=list[UserRead], tags=['Users']),
-        RouteDefinition('/api/v1/users', 'create_user', 'POST', response_model=UserRead, status_code=201, tags=['Users']),
+        RouteDefinition('/api/v1/users', 'create_user', 'POST', response_model=UserCreated, status_code=201, tags=['Users']),
         RouteDefinition('/api/v1/users/{user_id}', 'delete_user', 'DELETE', status_code=204, tags=['Users']),
         RouteDefinition('/api/v1/users/{user_id}/reset-password', 'reset_user_password', 'POST', status_code=204, tags=['Users']),
     ]
@@ -78,7 +82,10 @@ class UsersAPI(BaseAPI):
             db.rollback()
             raise HTTPException(409, 'Email address or professional license number is already in use')
         db.refresh(user)
-        return user
+        from app.services.welcome_email import send_welcome_email
+        # Delivery failure must not roll back the account or invite duplicate creation.
+        status = send_welcome_email(user)
+        return UserCreated(**UserRead.model_validate(user).model_dump(), welcome_email_status=status)
 
     @staticmethod
     def delete_user(user_id: int, actor=Depends(superadmin), db: Session = Depends(get_db)):
