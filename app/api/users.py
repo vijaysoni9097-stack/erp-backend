@@ -91,6 +91,8 @@ class UsersAPI(BaseAPI):
     def delete_user(user_id: int, actor=Depends(superadmin), db: Session = Depends(get_db)):
         from app.services.cloud_sync import require_local_identity_mode
         require_local_identity_mode()
+        if user_id == actor.id:
+            raise HTTPException(400, 'You cannot delete your own account')
         user = target_user(db, user_id, actor)
         if user.role == EmployeeRole.superadmin:
             raise HTTPException(403, 'Superadmin accounts cannot be deleted')

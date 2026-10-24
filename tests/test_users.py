@@ -84,7 +84,12 @@ class UserAdminTests(unittest.TestCase):
 
     def test_protected_admin_and_self(self):
         headers = self.admin_headers()
-        self.assertEqual(self.client.delete('/api/v1/users/1', headers=headers).status_code, 400)
+        response = self.client.delete('/api/v1/users/1', headers=headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['detail'], 'You cannot delete your own account')
+        self.assertEqual(self.client.get('/api/v1/auth/me', headers=headers).status_code, 200)
+        with SessionLocal() as db:
+            self.assertIsNotNone(db.get(PharmacistProfile, 1))
         self.assertEqual(self.client.post('/api/v1/users/1/reset-password', headers=headers, json={'new_password': PASSWORD, 'confirm_password': PASSWORD}).status_code, 400)
         other = self.create(headers, role='superadmin').json()
         self.assertEqual(self.client.delete(f"/api/v1/users/{other['id']}", headers=headers).status_code, 403)
