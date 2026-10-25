@@ -1,7 +1,7 @@
 from datetime import date
 from hashlib import sha256
 from app.services.sync_queue import queue_if_enabled
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy import select
@@ -68,7 +68,8 @@ class SaleAPI(BaseAPI):
         lock_inventory(db)
         receipt_hash = None
         if isinstance(payload, CheckoutCreate):
-            receipt_hash = sha256(payload.model_dump_json().encode()).hexdigest()
+            receipt_json = payload.model_dump_json(exclude={'items': {'__all__': {'discount_percent'}}}) if all(not item.discount_percent for item in payload.items) else payload.model_dump_json()
+            receipt_hash = sha256(receipt_json.encode()).hexdigest()
             receipt = db.get(CheckoutReceipt, str(payload.request_id))
             if receipt:
                 if receipt.actor_id != db.info.get('actor_id') or receipt.payload_hash != receipt_hash:
@@ -95,7 +96,8 @@ class SaleAPI(BaseAPI):
                 raise HTTPException(422, 'An expired or removed medicine cannot be sold')
             if medicines[item.medicine_id].stock_quantity < item.quantity:
                 raise HTTPException(status_code=422, detail=f"Insufficient stock for {medicines[item.medicine_id].name}")
-        subtotal = sum((medicines[item.medicine_id].selling_price * item.quantity for item in payload.items), Decimal("0"))
+        line_totals = {item.medicine_id: (medicines[item.medicine_id].selling_price * item.quantity * (Decimal('100')-item.discount_percent)/100).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) for item in payload.items}
+        subtotal = sum((line_totals[item.medicine_id] for item in payload.items), Decimal("0"))
         if isinstance(payload, CheckoutCreate):
             payment = payload.payment
             if payment.tendered < subtotal or (payment.method != 'cash' and payment.tendered != subtotal):
@@ -110,17 +112,24 @@ class SaleAPI(BaseAPI):
             db.add(prescription); db.flush()
             queue_if_enabled(db, 'prescriptions', prescription)
             customer_id = customer.id
-        subtotal = sum((medicines[item.medicine_id].selling_price * item.quantity for item in payload.items), Decimal("0"))
         sale = Sale(customer_id=customer_id, prescription_id=prescription.id if prescription else None,
                     subtotal=subtotal, tax_amount=payload.tax_amount, total_amount=subtotal + payload.tax_amount)
+        from app.models.company import CompanyRegistration, SaleCompany, SaleLineDiscount
+        from app.models.billing import BillingSettings
+        company = db.get(CompanyRegistration,1)
+        legacy = db.get(BillingSettings,1) if company is None else None
+        sale.company_record = SaleCompany(company_name=company.company_name if company else None,
+            address=company.address if company else None, gstin=company.gstin if company else legacy.gstin if legacy else None)
         db.add(sale)
         db.flush()
         for item in payload.items:
             medicine = medicines[item.medicine_id]
-            line_total = medicine.selling_price * item.quantity
+            line_total = line_totals[item.medicine_id]
             medicine.stock_quantity -= item.quantity
-            db.add(SaleItem(sale_id=sale.id, medicine_id=medicine.id, quantity=item.quantity,
-                            unit_price=medicine.selling_price, line_total=line_total))
+            entry = SaleItem(sale_id=sale.id, medicine_id=medicine.id, quantity=item.quantity,
+                            unit_price=medicine.selling_price, line_total=line_total)
+            entry.discount_record = SaleLineDiscount(original_unit_price=medicine.selling_price, discount_percent=item.discount_percent)
+            db.add(entry)
             db.add(StockMovement(medicine_id=medicine.id, movement_type=StockMovementType.sale,
                                  quantity_change=-item.quantity, note=f"Sale #{sale.id}"))
         if prescription:

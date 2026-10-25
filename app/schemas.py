@@ -73,6 +73,7 @@ class PrescriptionRead(PrescriptionCreate, ORMModel):
 
 
 class SaleItemCreate(BaseModel):
+    discount_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100, max_digits=5, decimal_places=2)
     medicine_id: int
     quantity: int = Field(gt=0)
 
@@ -120,6 +121,9 @@ class CheckoutCreate(SaleCreate):
 
 
 class SaleItemRead(ORMModel):
+    discount_percent: Decimal = Decimal("0")
+    original_unit_price: Decimal
+    discount_amount: Decimal = Decimal("0")
     id: int
     medicine_id: int
     quantity: int
@@ -127,7 +131,14 @@ class SaleItemRead(ORMModel):
     line_total: Decimal
 
 
+class CompanySnapshotRead(ORMModel):
+    company_name: str | None
+    address: str | None
+    gstin: str | None
+
+
 class SaleRead(ORMModel):
+    company: CompanySnapshotRead | None = None
     id: int
     customer_id: int | None
     prescription_id: int | None

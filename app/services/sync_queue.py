@@ -160,7 +160,10 @@ def enqueue_sale(db, sale, actor_id):
              'customer_id':ensure_parent(db,'customers',sale.customer_id,actor_id).cloud_id if sale.customer_id else None,
              'prescription_id':ensure_parent(db,'prescriptions',sale.prescription_id,actor_id).cloud_id if sale.prescription_id else None,
              'items':[{'medicine_id':ensure_parent(db,'medicines',item.medicine_id,actor_id).cloud_id,
-                       'quantity':item.quantity,'unit_price':str(item.unit_price)} for item in items]}
+                       'quantity':item.quantity,'unit_price':str(item.unit_price),
+                       'original_unit_price':str(item.original_unit_price),'discount_percent':str(item.discount_percent)} for item in items]}
+    if sale.company:
+        payload['company'] = {key:getattr(sale.company,key) for key in ('company_name','address','gstin')}
     if sale.payment:
         payload['payment'] = {key: str(getattr(sale.payment, key)) if key in ('amount','tendered','change') else getattr(sale.payment,key)
                               for key in ('method','amount','tendered','change','reference')}
@@ -213,6 +216,9 @@ def apply_stock_change(db, change):
     sale=Sale(customer_id=local('customers',data.get('customer_id')),prescription_id=local('prescriptions',data.get('prescription_id')),
               status=SaleStatus(data['status']),subtotal=Decimal(data['subtotal']),tax_amount=Decimal(data['tax_amount']),
               total_amount=Decimal(data['total_amount']),created_at=datetime.fromisoformat(data['occurred_at']).replace(tzinfo=None))
+    if data.get('company'):
+        from app.models.company import SaleCompany
+        sale.company_record = SaleCompany(**{key:data['company'].get(key) for key in ('company_name','address','gstin')})
     if data.get('payment'):
         from app.models.sales import SalePayment
         payment = data['payment']
@@ -222,6 +228,9 @@ def apply_stock_change(db, change):
     for item in data['items']:
         entry=SaleItem(sale_id=sale.id,medicine_id=local('medicines',item['medicine_id']),quantity=item['quantity'],
                        unit_price=Decimal(item['unit_price']),line_total=Decimal(item['line_total']))
+        if item.get('original_unit_price') is not None:
+            from app.models.company import SaleLineDiscount
+            entry.discount_record = SaleLineDiscount(original_unit_price=Decimal(str(item['original_unit_price'])),discount_percent=Decimal(str(item.get('discount_percent',0))))
         db.add(entry)
     for item in data['stock_movements']: movement(item,sale.id)
 

@@ -1,3 +1,4 @@
+from decimal import Decimal
 """Cloud RPC transport. Device code uses user JWTs, never database-owner credentials."""
 import json
 from datetime import datetime, timedelta, timezone
@@ -137,6 +138,18 @@ def upload_batch(db, actor_id, token):
             break
         size+=encoded_size; operations.append(operation); envelopes.append(envelope)
     if not operations: return 0
+    requires_invoice_details = any(op.entity=='sales' and
+        (any((op.payload.get('company') or {}).values()) or any(Decimal(str(item.get('discount_percent',0))) for item in op.payload.get('items',[])))
+        for op in operations)
+    if requires_invoice_details:
+        try:
+            capability=request('/rest/v1/rpc/erp_invoice_features',{},token)
+        except HTTPException as error:
+            if error.status_code in (400,404):
+                raise HTTPException(409,'The sync server needs the company and invoice discount migration. Saved changes remain queued.') from None
+            raise
+        if capability != 1:
+            raise HTTPException(409,'The sync server does not support company and invoice discount details yet. Saved changes remain queued.')
     db.commit()  # Freeze every retry envelope before sending anything.
     result=request('/rest/v1/rpc/erp_sync_push_batch',
                    {'p_device':get_settings().sync_device_id,'p_operations':envelopes},token)

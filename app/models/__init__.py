@@ -43,3 +43,5 @@ __all__ = [
 
 from app.models.sync import SyncIdentity, SyncOutbox, SyncState, OfflineLease
 from app.models.stock_snapshot import StockSnapshot
+
+from app.models.company import CompanyRegistration, SaleCompany, SaleLineDiscount

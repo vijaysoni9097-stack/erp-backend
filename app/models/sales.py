@@ -28,6 +28,12 @@ class Sale(Base):
     tax_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now())
+    company_record: Mapped["SaleCompany | None"] = relationship("SaleCompany", uselist=False, cascade="all, delete-orphan")
+
+    @property
+    def company(self):
+        return self.company_record
+
     customer: Mapped["Customer | None"] = relationship(back_populates="sales")
     prescription: Mapped["Prescription | None"] = relationship(back_populates="sales")
     payment: Mapped["SalePayment | None"] = relationship(uselist=False, cascade="all, delete-orphan")
@@ -43,6 +49,20 @@ class SaleItem(Base):
     quantity: Mapped[int] = mapped_column()
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    discount_record: Mapped["SaleLineDiscount | None"] = relationship("SaleLineDiscount", uselist=False, cascade="all, delete-orphan")
+
+    @property
+    def discount_percent(self):
+        return self.discount_record.discount_percent if self.discount_record else Decimal('0')
+
+    @property
+    def original_unit_price(self):
+        return self.discount_record.original_unit_price if self.discount_record else self.unit_price
+
+    @property
+    def discount_amount(self):
+        return self.original_unit_price * self.quantity - self.line_total
+
     sale: Mapped[Sale] = relationship(back_populates="items")
     medicine: Mapped["Medicine"] = relationship(back_populates="sale_items")
 
