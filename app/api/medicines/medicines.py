@@ -15,6 +15,7 @@ from app.schemas import MedicineCreate, MedicineRead, StockAdjustment, StockMove
 class MedicineAPI(BaseAPI):
     methods = ["GET", "POST"]
     routes = [
+        RouteDefinition('/api/v1/medicines/expiring-soon', 'expiring_soon', 'GET', tags=['Medicines']),
         RouteDefinition("/api/v1/medicines/expiry-alerts", "expiry_alerts", "GET", tags=["Medicines"]),
         RouteDefinition("/api/v1/medicines", "get", "GET", response_model=list[MedicineRead], tags=["Medicines"]),
         RouteDefinition("/api/v1/medicines", "post", "POST", response_model=MedicineRead,
@@ -24,6 +25,17 @@ class MedicineAPI(BaseAPI):
         RouteDefinition("/api/v1/medicines/{medicine_id}/movements", "get_movements", "GET",
                         response_model=list[StockMovementRead], tags=["Medicines"]),
     ]
+
+    @staticmethod
+    def expiring_soon(today: date | None = None, db: Session = Depends(get_db)):
+        # Client day keeps ticker boundaries consistent with the dashboard.
+        today = today or date.today()
+        deleted = select(SyncIdentity.local_id).where(SyncIdentity.entity == 'medicines', SyncIdentity.deleted == True)
+        query = select(Medicine.id, Medicine.name, Medicine.batch_number, Medicine.expiry_date, Medicine.stock_quantity).where(
+            Medicine.stock_quantity > 0, Medicine.expiry_date >= today,
+            Medicine.expiry_date <= today + timedelta(days=30), ~Medicine.id.in_(deleted)
+        ).order_by(Medicine.expiry_date, Medicine.name, Medicine.id)
+        return [dict(row) for row in db.execute(query).mappings()]
 
     @staticmethod
     def expiry_alerts(db: Session = Depends(get_db)):

@@ -29,10 +29,16 @@ def pending_receipt(actor=Depends(get_current_profile), db: Session = Depends(ge
     orders = db.scalars(select(PurchaseOrder).options(selectinload(PurchaseOrder.items))
                         .where(PurchaseOrder.status.in_(PENDING)).order_by(PurchaseOrder.id)).all()
     totals = received_totals(db)
+    medicine_ids = {item.medicine_id for order in orders for item in order.items}
+    medicines = {m.id: m for m in db.scalars(select(Medicine).where(Medicine.id.in_(medicine_ids)))} if medicine_ids else {}
     result = []
     for order in orders:
         data = PurchaseOrderRead.model_validate(order).model_dump(mode='json')
         for item in data['items']:
+            medicine = medicines.get(item['medicine_id'])
+            item['expiry_date'] = medicine.expiry_date.isoformat() if medicine else None
+            item['unit'] = medicine.unit if medicine else 'number'
+            item['selling_price'] = str(medicine.selling_price) if medicine else None
             item['received_quantity'] = totals.get(item['id'], 0)
             item['remaining_quantity'] = max(0, item['quantity'] - item['received_quantity'])
         result.append(data)

@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from app.api.registry import register_apis
 from app.config import get_settings
@@ -17,6 +18,7 @@ def create_app() -> FastAPI:
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=["Authorization", "Content-Type"],
         )
+    app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
     register_apis(app)
     return app
 
