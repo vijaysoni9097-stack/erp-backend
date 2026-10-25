@@ -11,7 +11,7 @@ from app.database import get_db
 from app.models import Medicine, Supplier
 from app.models.sync import SyncIdentity
 from app.models.purchase_orders import PurchaseOrder, PurchaseOrderItem
-from app.schemas_purchase_orders import PurchaseOrderCreate, PurchaseOrderRead, ReceiptCreate
+from app.schemas_purchase_orders import PurchaseOrderCreate, PurchaseOrderRead, ReceiptCreate, PurchaseApproval
 from app.services.purchase_receipts import pending_receipt, receive
 from app.services.auth import get_current_profile
 
@@ -30,6 +30,7 @@ def replay(order, actor, fingerprint):
 class PurchaseOrderAPI(BaseAPI):
     methods = ['GET', 'POST']
     routes = [
+        RouteDefinition('/api/v1/purchase-orders/{order_id}/approve', 'approve', 'POST', response_model=PurchaseOrderRead, tags=['Purchase Orders']),
         RouteDefinition('/api/v1/purchase-orders/pending-receipt', 'pending_receipt', 'GET', tags=['Purchase Orders']),
         RouteDefinition('/api/v1/purchase-orders/{order_id}/receipts', 'receive', 'POST', response_model=PurchaseOrderRead, tags=['Purchase Orders']),
         RouteDefinition('/api/v1/purchase-orders', 'get', 'GET', response_model=list[PurchaseOrderRead], tags=['Purchase Orders']),
@@ -81,8 +82,6 @@ class PurchaseOrderAPI(BaseAPI):
                        for item in payload.items]
         db.add(order)
         try:
-            from app.services.sync_queue import queue_if_enabled
-            queue_if_enabled(db, 'purchase_orders', order)
             db.commit()
         except IntegrityError:
             db.rollback()
@@ -90,6 +89,37 @@ class PurchaseOrderAPI(BaseAPI):
             if prior:
                 return replay(prior, actor, fingerprint)
             raise HTTPException(409, 'Supplier or medicine changed. Refresh the catalog before retrying.')
+        db.refresh(order)
+        return order
+
+    @staticmethod
+    def approve(order_id: int, payload: PurchaseApproval, actor=Depends(get_current_profile), db: Session = Depends(get_db)):
+        if actor.role not in ('admin', 'superadmin'):
+            raise HTTPException(403, 'Admin approval required')
+        from app.database import lock_inventory
+        lock_inventory(db)
+        order = db.scalar(select(PurchaseOrder).where(PurchaseOrder.id == order_id).with_for_update())
+        if order is None:
+            raise HTTPException(404, 'Purchase order not found')
+        quantities = {item.order_item_id: item.quantity for item in payload.items}
+        if set(quantities) != {item.id for item in order.items}:
+            raise HTTPException(422, 'Include every order item exactly once')
+        if order.status == 'approved' and all(item.quantity == quantities[item.id] for item in order.items):
+            return order
+        if order.status != 'pending_approval':
+            raise HTTPException(409, 'Order already processed. Refresh before reviewing it again.')
+        from app.models.purchase_orders import PurchaseReceipt
+        if db.scalar(select(PurchaseReceipt.id).where(PurchaseReceipt.order_id == order_id).limit(1)):
+            raise HTTPException(409, 'An order with receipts cannot be changed')
+        total = sum((item.unit_price * quantities[item.id] for item in order.items), Decimal('0.00'))
+        if total > Decimal('9999999999.99'):
+            raise HTTPException(422, 'Purchase order total exceeds the supported amount')
+        for item in order.items:
+            item.quantity = quantities[item.id]
+            item.line_total = item.unit_price * item.quantity
+        order.total_amount = total
+        order.status = 'approved'
+        db.commit()
         db.refresh(order)
         return order
 

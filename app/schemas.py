@@ -26,6 +26,7 @@ class SupplierRead(SupplierCreate, ORMModel):
 
 
 class MedicineCreate(BaseModel):
+    unit: str = Field(default="number", min_length=1, max_length=30)
     name: str = Field(min_length=2, max_length=150)
     generic_name: str | None = None
     sku: str = Field(min_length=2, max_length=50)
@@ -133,6 +134,9 @@ class CheckoutCreate(SaleCreate):
 
 
 class SaleItemRead(ORMModel):
+    medicine_name: str | None = None
+    batch_number: str | None = None
+    expiry_date: date | None = None
     discount_percent: Decimal = Decimal("0")
     original_unit_price: Decimal
     discount_amount: Decimal = Decimal("0")
@@ -150,6 +154,9 @@ class CompanySnapshotRead(ORMModel):
 
 
 class SaleRead(ORMModel):
+    patient_name: str | None = None
+    customer_mobile: str | None = None
+    prescribed_by: str | None = None
     company: CompanySnapshotRead | None = None
     id: int
     customer_id: int | None

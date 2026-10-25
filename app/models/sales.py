@@ -34,6 +34,18 @@ class Sale(Base):
     def company(self):
         return self.company_record
 
+    @property
+    def patient_name(self):
+        return self.customer.full_name if self.customer else None
+
+    @property
+    def customer_mobile(self):
+        return self.customer.phone if self.customer else None
+
+    @property
+    def prescribed_by(self):
+        return self.prescription.doctor_name if self.prescription else None
+
     customer: Mapped["Customer | None"] = relationship(back_populates="sales")
     prescription: Mapped["Prescription | None"] = relationship(back_populates="sales")
     payment: Mapped["SalePayment | None"] = relationship(uselist=False, cascade="all, delete-orphan")
@@ -62,6 +74,18 @@ class SaleItem(Base):
     @property
     def discount_amount(self):
         return self.original_unit_price * self.quantity - self.line_total
+
+    @property
+    def medicine_name(self):
+        return self.medicine.name if self.medicine else None
+
+    @property
+    def batch_number(self):
+        return self.medicine.batch_number if self.medicine else None
+
+    @property
+    def expiry_date(self):
+        return self.medicine.expiry_date if self.medicine else None
 
     sale: Mapped[Sale] = relationship(back_populates="items")
     medicine: Mapped["Medicine"] = relationship(back_populates="sale_items")

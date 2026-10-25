@@ -70,8 +70,6 @@ class UsersAPI(BaseAPI):
 
     @staticmethod
     def create_user(payload: CreateUser, actor=Depends(superadmin), db: Session = Depends(get_db)):
-        from app.services.cloud_sync import require_local_identity_mode
-        require_local_identity_mode()
         if db.scalar(select(PharmacistProfile.id).where(func.lower(PharmacistProfile.email) == payload.email)):
             raise HTTPException(409, 'Email address is already in use')
         user = PharmacistProfile(**payload.model_dump(exclude={'password'}), password_hash=hash_secret(payload.password))
@@ -89,8 +87,6 @@ class UsersAPI(BaseAPI):
 
     @staticmethod
     def delete_user(user_id: int, actor=Depends(superadmin), db: Session = Depends(get_db)):
-        from app.services.cloud_sync import require_local_identity_mode
-        require_local_identity_mode()
         if user_id == actor.id:
             raise HTTPException(400, 'You cannot delete your own account')
         user = target_user(db, user_id, actor)
@@ -103,8 +99,6 @@ class UsersAPI(BaseAPI):
 
     @staticmethod
     def reset_user_password(user_id: int, payload: AdminPassword, actor=Depends(superadmin), db: Session = Depends(get_db)):
-        from app.services.cloud_sync import require_local_identity_mode
-        require_local_identity_mode()
         user = target_user(db, user_id, actor)
         if payload.new_password != payload.confirm_password:
             raise HTTPException(422, 'New password and confirmation must match')

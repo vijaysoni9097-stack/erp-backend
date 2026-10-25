@@ -1,5 +1,4 @@
 from datetime import date, timedelta
-from app.services.sync_queue import queue_if_enabled
 from fastapi import Depends, HTTPException, status
 from app.models.sync import SyncIdentity
 from sqlalchemy import or_, select
@@ -55,8 +54,6 @@ class MedicineAPI(BaseAPI):
     @staticmethod
     def post(payload: MedicineCreate, db: Session = Depends(get_db)) -> Medicine:
         from app.config import get_settings
-        if get_settings().sync_enabled and payload.stock_quantity:
-            raise HTTPException(409, 'Receive and allocate cloud stock before selling on this device')
         if payload.supplier_id is not None:
             get_or_404(db, Supplier, payload.supplier_id, "Supplier")
         medicine = Medicine(**payload.model_dump())
@@ -66,7 +63,6 @@ class MedicineAPI(BaseAPI):
             if medicine.stock_quantity:
                 db.add(StockMovement(medicine_id=medicine.id, movement_type=StockMovementType.received,
                                      quantity_change=medicine.stock_quantity, note="Opening stock"))
-            queue_if_enabled(db, 'medicines', medicine)
             db.commit()
         except IntegrityError:
             db.rollback()
@@ -77,8 +73,6 @@ class MedicineAPI(BaseAPI):
     @staticmethod
     def post_stock(medicine_id: int, payload: StockAdjustment, db: Session = Depends(get_db)) -> Medicine:
         from app.config import get_settings
-        if get_settings().sync_enabled:
-            raise HTTPException(409, 'Stock changes require online receipt/allocation in sync mode')
         from app.database import lock_inventory
         lock_inventory(db)
         medicine = get_or_404(db, Medicine, medicine_id, "Medicine")

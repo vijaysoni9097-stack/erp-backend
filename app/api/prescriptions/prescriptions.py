@@ -1,4 +1,3 @@
-from app.services.sync_queue import queue_if_enabled
 from fastapi import Depends, Query, status
 from app.models.sync import SyncIdentity
 from sqlalchemy import select
@@ -33,7 +32,6 @@ class PrescriptionAPI(BaseAPI):
         get_or_404(db, Customer, payload.customer_id, "Customer")
         prescription = Prescription(**payload.model_dump())
         db.add(prescription)
-        queue_if_enabled(db, 'prescriptions', prescription)
         db.commit()
         db.refresh(prescription)
         return prescription

@@ -1,6 +1,5 @@
 from datetime import date, datetime, timezone
 from hashlib import sha256
-from app.services.sync_queue import queue_if_enabled
 from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import Depends, HTTPException, status
@@ -30,7 +29,8 @@ from app.services.auth import get_current_profile
 def invoice_load_options():
     # Batch related invoice data instead of querying separately for each sale/line.
     return (joinedload(Sale.payment), joinedload(Sale.company_record),
-            selectinload(Sale.items).joinedload(SaleItem.discount_record))
+            joinedload(Sale.customer), joinedload(Sale.prescription),
+            selectinload(Sale.items).options(joinedload(SaleItem.discount_record),joinedload(SaleItem.medicine)))
 
 class SaleAPI(BaseAPI):
     methods = ["GET", "POST"]
@@ -127,11 +127,9 @@ class SaleAPI(BaseAPI):
             if customer is None:
                 customer = Customer(full_name=payload.patient_name,phone=payload.customer_mobile)
                 db.add(customer); db.flush()
-                queue_if_enabled(db, 'customers', customer)
             prescription = Prescription(customer_id=customer.id, doctor_name=payload.prescribed_by,
                                         prescribed_on=date.today(), status=PrescriptionStatus.pending)
             db.add(prescription); db.flush()
-            queue_if_enabled(db, 'prescriptions', prescription)
             customer_id = customer.id
         sale = Sale(customer_id=customer_id, prescription_id=prescription.id if prescription else None,
                     subtotal=subtotal, tax_amount=payload.tax_amount, total_amount=subtotal + payload.tax_amount)
@@ -159,7 +157,6 @@ class SaleAPI(BaseAPI):
             sale.payment = SalePayment(method=payload.payment.method, amount=sale.total_amount,
                 tendered=payload.payment.tendered, change=payload.payment.tendered-sale.total_amount,
                 reference=payload.payment.reference)
-        queue_if_enabled(db, 'sales', sale)
         if receipt_hash:
             db.add(CheckoutReceipt(request_id=str(payload.request_id), actor_id=db.info['actor_id'],
                                    payload_hash=receipt_hash, sale_id=sale.id))

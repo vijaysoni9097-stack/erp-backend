@@ -11,7 +11,7 @@ from app.models.sync import SyncIdentity
 from app.schemas_purchase_orders import PurchaseOrderRead, ReceiptCreate
 from app.services.auth import get_current_profile
 
-PENDING = ('pending_approval', 'approved', 'ordered', 'partially_received')
+PENDING = ('approved', 'ordered', 'partially_received')
 
 
 def authorize(actor):
@@ -40,10 +40,9 @@ def pending_receipt(actor=Depends(get_current_profile), db: Session = Depends(ge
 
 
 def receive(order_id: int, payload: ReceiptCreate, actor=Depends(get_current_profile), db: Session = Depends(get_db)):
-    authorize(actor)
+    if actor.role not in ('admin', 'superadmin'):
+        raise HTTPException(403, 'Admin delivery review required')
     from app.config import get_settings
-    if get_settings().sync_enabled:
-        raise HTTPException(409, 'PO receiving requires cloud receipt/allocation support in sync mode')
     lock_inventory(db)
     fingerprint = sha256(payload.model_dump_json().encode()).hexdigest()
 
@@ -74,7 +73,32 @@ def receive(order_id: int, payload: ReceiptCreate, actor=Depends(get_current_pro
         for item in payload.items:
             if not item.quantity:
                 continue
-            medicine_id = catalog[item.order_item_id].medicine_id
+            line = catalog[item.order_item_id]
+            if item.quantity > line.quantity - received_totals(db).get(line.id, 0):
+                raise HTTPException(422, 'Received quantity exceeds the approved remaining quantity')
+            original = db.get(Medicine, line.medicine_id)
+            if original is None:
+                raise HTTPException(409, 'Medicine is unavailable')
+            if original.batch_number == item.batch_number and original.expiry_date == item.expiry_date:
+                target = original
+                if target.stock_quantity > 0 and target.unit != item.unit:
+                    raise HTTPException(422, 'Unit differs from existing stock. Receive a separate batch or use the existing unit.')
+            elif original.stock_quantity == 0 and not original.sale_items and not original.stock_movements:
+                target = original
+                target.batch_number = item.batch_number
+                target.expiry_date = item.expiry_date
+            else:
+                from uuid import uuid4
+                target = Medicine(name=original.name, generic_name=original.generic_name,
+                    sku=f"{original.sku[:25]}-{uuid4().hex[:20]}", batch_number=item.batch_number,
+                    expiry_date=item.expiry_date, stock_quantity=0, reorder_level=original.reorder_level)
+                db.add(target)
+            target.unit = item.unit
+            target.purchase_price = item.purchase_price
+            target.selling_price = item.selling_price
+            target.supplier_id = order.supplier_id
+            db.flush()
+            medicine_id = target.id
             changed = db.execute(update(Medicine).where(Medicine.id == medicine_id,
                                  Medicine.stock_quantity <= 2147483647 - item.quantity)
                                  .values(stock_quantity=Medicine.stock_quantity + item.quantity))
@@ -82,7 +106,7 @@ def receive(order_id: int, payload: ReceiptCreate, actor=Depends(get_current_pro
                 raise HTTPException(409, 'Medicine unavailable or stock exceeds supported limit')
             receipt.items.append(PurchaseReceiptItem(order_item_id=item.order_item_id, quantity=item.quantity))
             db.add(StockMovement(medicine_id=medicine_id, movement_type=StockMovementType.received,
-                                 quantity_change=item.quantity, note=f'PO #{order_id}; receipt {payload.request_id}'))
+                                 quantity_change=item.quantity, note=f'PO #{order_id}; receipt {payload.request_id}; reviewed by admin #{actor.id}; batch {item.batch_number}; expiry {item.expiry_date}; unit {item.unit}; purchase {item.purchase_price}; selling {item.selling_price}'))
         db.add(receipt)
         db.flush()
         totals = received_totals(db)

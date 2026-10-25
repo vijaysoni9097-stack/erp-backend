@@ -53,18 +53,6 @@ class CompanyDiscountTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/v1/settings/company',headers=headers).status_code,200)
         self.assertEqual(self.client.put('/api/v1/settings/company',headers=headers,json={'company_name':'test'}).status_code,403)
 
-    def test_old_sync_server_does_not_accept_discount_metadata(self):
-        from uuid import uuid4
-        from fastapi import HTTPException
-        from app.models.sync import SyncOutbox
-        from app.services.cloud_sync import upload_batch
-        with SessionLocal() as db:
-            operation=SyncOutbox(operation_id=str(uuid4()),actor_id=1,entity='sales',cloud_id=str(uuid4()),state='pending',payload={'items':[{'discount_percent':'10'}]})
-            db.add(operation);db.commit()
-            with patch('app.services.cloud_sync.request',return_value=0) as request:
-                with self.assertRaises(HTTPException):upload_batch(db,1,'test-token')
-                request.assert_called_once_with('/rest/v1/rpc/erp_invoice_features',{},'test-token')
-            self.assertEqual(operation.state,'pending')
 
 
     def test_admin_registers_once_superadmin_can_update(self):

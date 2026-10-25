@@ -58,18 +58,13 @@ class CheckoutTests(unittest.TestCase):
         p['patient_name']=' '
         self.assertEqual(self.client.post('/api/v1/sales/checkout',headers=headers,json=p).status_code,422)
 
-    def test_outbox_parent_order(self):
-        from app.config import get_settings
-        from app.models.sync import OfflineLease
-        from datetime import datetime
-        mid=self.seed();headers=self.headers()
+    def test_checkout_saves_directly_without_sync_outbox(self):
+        mid = self.seed(); headers = self.headers()
+        result = self.client.post('/api/v1/sales/checkout', headers=headers, json=self.payload(mid))
+        self.assertEqual(result.status_code, 201, result.text)
         with SessionLocal() as db:
-            db.add(OfflineLease(profile_id=1,cloud_employee_id=str(uuid4()),expires_at=datetime.utcnow()+timedelta(hours=12),last_observed_at=datetime.utcnow()));db.commit()
-        with patch.object(get_settings(),'sync_enabled',True):
-            result=self.client.post('/api/v1/sales/checkout',headers=headers,json=self.payload(mid))
-        self.assertEqual(result.status_code,201,result.text)
-        with SessionLocal() as db:
-            self.assertEqual([o.entity for o in db.scalars(select(SyncOutbox).order_by(SyncOutbox.sequence))],['customers','prescriptions','medicines','sales'])
+            self.assertEqual(list(db.scalars(select(SyncOutbox))), [])
+
 
     def test_payment_validation_and_cash_change(self):
         headers=self.headers();mid=self.seed();payload=self.payload(mid)

@@ -92,9 +92,10 @@ class PurchaseOrderTests(unittest.TestCase):
     def test_receiving_partial_final_and_retry(self):
         supplier, medicine = self.seed(); headers = self.headers()
         order = self.client.post('/api/v1/purchase-orders', json=self.payload(supplier, medicine), headers=headers).json()
+        self.approve_order(order, headers)
         pending = self.client.get('/api/v1/purchase-orders/pending-receipt', headers=headers).json()
         self.assertEqual(pending[0]['items'][0]['remaining_quantity'], 3)
-        payload = dict(request_id=str(uuid4()), items=[dict(order_item_id=order['items'][0]['id'], quantity=2)])
+        payload = dict(request_id=str(uuid4()), items=[dict(order_item_id=order['items'][0]['id'], quantity=2, **self.delivery())])
         url = f"/api/v1/purchase-orders/{order['id']}/receipts"
         response = self.client.post(url, json=payload, headers=headers)
         self.assertEqual(response.status_code, 200, response.text)
@@ -116,14 +117,15 @@ class PurchaseOrderTests(unittest.TestCase):
     def test_receipt_validation_and_short_final_delivery(self):
         supplier, medicine = self.seed(); headers = self.headers()
         order = self.client.post('/api/v1/purchase-orders', json=self.payload(supplier, medicine), headers=headers).json()
+        self.approve_order(order, headers)
         url = f"/api/v1/purchase-orders/{order['id']}/receipts"
-        payload = dict(request_id=str(uuid4()), items=[dict(order_item_id=order['items'][0]['id'], quantity=0)])
+        payload = dict(request_id=str(uuid4()), items=[dict(order_item_id=order['items'][0]['id'], quantity=0, **self.delivery())])
         self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 422)
-        payload['items'][0] = dict(order_item_id=999999, quantity=2)
+        payload['items'][0] = dict(order_item_id=999999, quantity=2, **self.delivery())
         self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 422)
         with SessionLocal() as db:
             self.assertEqual(db.get(Medicine, medicine).stock_quantity, 7)
-        payload['items'][0] = dict(order_item_id=order['items'][0]['id'], quantity=1)
+        payload['items'][0] = dict(order_item_id=order['items'][0]['id'], quantity=1, **self.delivery())
         payload['close_order'] = True
         self.assertEqual(self.client.post(url, json=payload, headers=headers).json()['status'], 'received')
         snapshot = self.client.get('/api/v1/inventory/source-stock', headers=headers)
@@ -133,3 +135,68 @@ class PurchaseOrderTests(unittest.TestCase):
         self.assertEqual(medicines[0]['stock_quantity'], 8)
         payload['request_id'] = str(uuid4())
         self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 409)
+
+    def approve_order(self, order, headers, quantity=None):
+        with SessionLocal() as db:
+            db.get(PharmacistProfile, 1).role = 'admin'; db.commit()
+        payload = {'items': [{'order_item_id': item['id'], 'quantity': quantity or item['quantity']} for item in order['items']]}
+        response = self.client.post(f"/api/v1/purchase-orders/{order['id']}/approve", json=payload, headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()
+
+    def test_admin_approval_quantities_and_receipt_gate(self):
+        supplier, medicine = self.seed(); headers = self.headers()
+        order = self.client.post('/api/v1/purchase-orders', json=self.payload(supplier, medicine), headers=headers).json()
+        url = f"/api/v1/purchase-orders/{order['id']}/approve"
+        payload = {'items': [{'order_item_id': order['items'][0]['id'], 'quantity': 5}]}
+        self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 403)
+        self.assertEqual(self.client.get('/api/v1/purchase-orders/pending-receipt', headers=headers).json(), [])
+        receipt = {'request_id': str(uuid4()), 'items': [{**payload['items'][0], **self.delivery()}]}
+        self.assertEqual(self.client.post(f"/api/v1/purchase-orders/{order['id']}/receipts", json=receipt, headers=headers).status_code, 403)
+        approved = self.approve_order(order, headers, 5)
+        self.assertEqual(approved['status'], 'approved')
+        self.assertEqual(approved['total_amount'], '61.75')
+        self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 200)
+        payload['items'][0]['quantity'] = 6
+        self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 409)
+        with SessionLocal() as db:
+            self.assertEqual(db.get(Medicine, medicine).stock_quantity, 7)
+
+    def delivery(self):
+        return dict(batch_number='B01', expiry_date=str(date.today()+timedelta(days=90)), unit='number', purchase_price='3.00', selling_price='5.00')
+
+    def test_delivery_review_new_batch_and_prices(self):
+        supplier, medicine = self.seed(); headers = self.headers()
+        order = self.client.post('/api/v1/purchase-orders', json=self.payload(supplier, medicine), headers=headers).json()
+        self.approve_order(order, headers)
+        details = {**self.delivery(), 'batch_number':'NEW-BATCH', 'unit':'tablet', 'purchase_price':'4.25', 'selling_price':'7.50'}
+        payload = dict(request_id=str(uuid4()), items=[dict(order_item_id=order['items'][0]['id'], quantity=3, **details)])
+        url = f"/api/v1/purchase-orders/{order['id']}/receipts"
+        bad = {**payload, 'items':[{**payload['items'][0], 'expiry_date':str(date.today()-timedelta(days=1))}]}
+        self.assertEqual(self.client.post(url, json=bad, headers=headers).status_code, 422)
+        self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 200)
+        self.assertEqual(self.client.post(url, json=payload, headers=headers).status_code, 200)
+        with SessionLocal() as db:
+            original = db.get(Medicine, medicine)
+            self.assertEqual(original.stock_quantity, 7)
+            self.assertEqual(original.batch_number, 'B01')
+            new = db.scalar(select(Medicine).where(Medicine.batch_number=='NEW-BATCH'))
+            self.assertEqual(new.stock_quantity, 3)
+            self.assertEqual(new.unit, 'tablet')
+            self.assertEqual(str(new.purchase_price), '4.25')
+            self.assertEqual(str(new.selling_price), '7.50')
+
+    def test_admin_created_order_still_requires_approval(self):
+        supplier, medicine = self.seed()
+        with SessionLocal() as db:
+            db.get(PharmacistProfile, 1).role = 'admin'; db.commit()
+        headers = self.headers()
+        response = self.client.post('/api/v1/purchase-orders', json=self.payload(supplier, medicine), headers=headers)
+        self.assertEqual(response.status_code, 201, response.text)
+        order = response.json()
+        self.assertEqual(order['status'], 'pending_approval')
+        self.assertEqual(self.client.get('/api/v1/purchase-orders/pending-receipt', headers=headers).json(), [])
+        approved = self.approve_order(order, headers)
+        self.assertEqual(approved['status'], 'approved')
+        pending = self.client.get('/api/v1/purchase-orders/pending-receipt', headers=headers).json()
+        self.assertEqual(pending[0]['id'], order['id'])

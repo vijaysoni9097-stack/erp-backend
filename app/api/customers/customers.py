@@ -1,5 +1,4 @@
 from pydantic import BaseModel, ConfigDict
-from app.services.sync_queue import queue_if_enabled
 from fastapi import Depends, status, Query, HTTPException
 from app.services.auth import get_current_profile
 from app.services.customer_mobile import customers_by_mobile, normalize_mobile
@@ -40,7 +39,6 @@ class CustomerAPI(BaseAPI):
     def post(payload: CustomerCreate, db: Session = Depends(get_db)) -> Customer:
         customer = Customer(**payload.model_dump())
         db.add(customer)
-        queue_if_enabled(db, 'customers', customer)
         db.commit()
         db.refresh(customer)
         return customer

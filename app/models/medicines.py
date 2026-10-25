@@ -29,6 +29,7 @@ class Medicine(Base):
     expiry_date: Mapped[date] = mapped_column(Date(), index=True)
     purchase_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     selling_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    unit: Mapped[str] = mapped_column(String(30), default="number", server_default="number")
     stock_quantity: Mapped[int] = mapped_column(default=0)
     reorder_level: Mapped[int] = mapped_column(default=10)
     supplier_id: Mapped[int | None] = mapped_column(ForeignKey("suppliers.id"))

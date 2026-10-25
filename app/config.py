@@ -13,12 +13,6 @@ class Settings(BaseSettings):
     require_postgres: bool = False
     cors_origins: list[str] = []
     database_url: str = "sqlite:///./temp.db"
-    sync_enabled: bool = False
-    sync_device_secret: str | None = None
-    sync_device_id: str | None = None
-    sync_pharmacy_id: str | None = None
-    supabase_project_url: str | None = None
-    supabase_publishable_key: str | None = None
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None

@@ -37,3 +37,11 @@ def migrate_employee_table(engine):
         except Exception:
             connection.rollback()
             raise
+
+
+def migrate_medicine_unit(engine):
+    with engine.begin() as connection:
+        if 'medicines' not in inspect(connection).get_table_names():
+            return
+        if 'unit' not in {column['name'] for column in inspect(connection).get_columns('medicines')}:
+            connection.exec_driver_sql("ALTER TABLE medicines ADD COLUMN unit VARCHAR(30) NOT NULL DEFAULT 'number'")

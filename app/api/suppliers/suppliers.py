@@ -1,4 +1,3 @@
-from app.services.sync_queue import queue_if_enabled
 from fastapi import Depends, HTTPException, status
 from app.models.sync import SyncIdentity
 from sqlalchemy import select
@@ -30,7 +29,6 @@ class SupplierAPI(BaseAPI):
         supplier = Supplier(**payload.model_dump())
         db.add(supplier)
         try:
-            queue_if_enabled(db, 'suppliers', supplier)
             db.commit()
         except IntegrityError:
             db.rollback()
@@ -44,7 +42,6 @@ class SupplierAPI(BaseAPI):
         supplier = get_or_404(db, Supplier, supplier_id, 'Supplier')
         for key, value in payload.model_dump().items(): setattr(supplier,key,value)
         try:
-            queue_if_enabled(db, 'suppliers', supplier)
             db.commit()
         except IntegrityError:
             db.rollback()
@@ -60,7 +57,6 @@ class SupplierAPI(BaseAPI):
         if db.scalar(select(Medicine.id).where(Medicine.supplier_id==supplier_id)):
             raise HTTPException(409, 'This supplier is linked to medicines and cannot be deleted')
         try:
-            queue_if_enabled(db, 'suppliers', supplier, deleted=True)
             db.delete(supplier)
             db.commit()
         except IntegrityError:

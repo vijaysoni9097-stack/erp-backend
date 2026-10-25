@@ -1,4 +1,4 @@
-"""Offline login and revocable local sessions."""
+"""Hosted authentication and revocable sessions."""
 
 from hashlib import sha256
 
@@ -40,8 +40,6 @@ class AuthAPI(BaseAPI):
     def forgot_password(payload: ForgotPasswordRequest, response: Response,
                         db: Session = Depends(get_db)) -> ForgotPasswordResponse:
         response.headers["Cache-Control"] = "no-store"
-        from app.services.cloud_sync import require_local_identity_mode
-        require_local_identity_mode()
         request_password_reset(db, payload.email)
         return ForgotPasswordResponse()
 
@@ -49,8 +47,6 @@ class AuthAPI(BaseAPI):
     def reset_password(payload: ResetPasswordRequest, response: Response,
                        db: Session = Depends(get_db)) -> None:
         response.headers["Cache-Control"] = "no-store"
-        from app.services.cloud_sync import require_local_identity_mode
-        require_local_identity_mode()
         reset_password(db, payload.token, payload.new_password)
 
     @staticmethod
@@ -63,9 +59,6 @@ class AuthAPI(BaseAPI):
             raise HTTPException(status_code=401, detail="Invalid email or password",
                                 headers={"WWW-Authenticate": "Bearer"})
         from app.config import get_settings
-        if get_settings().sync_enabled:
-            from app.services.cloud_sync import login
-            login(db, profile, payload.password)
         token, expires_at = create_session(db, profile)
         response.headers["Cache-Control"] = "no-store"
         return LoginResponse(access_token=token, expires_at=expires_at, profile=profile)
@@ -78,8 +71,6 @@ class AuthAPI(BaseAPI):
     def logout(profile: PharmacistProfile = Depends(get_current_profile),
                credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
                db: Session = Depends(get_db)) -> None:
-        from app.services.cloud_sync import forget_session
-        forget_session(profile.id, db)
         db.execute(delete(AuthSession).where(
             AuthSession.profile_id == profile.id,
             AuthSession.token_hash == sha256(credentials.credentials.encode()).hexdigest(),
