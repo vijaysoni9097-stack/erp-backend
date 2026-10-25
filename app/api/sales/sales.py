@@ -1,11 +1,11 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from hashlib import sha256
 from app.services.sync_queue import queue_if_enabled
 from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, selectinload, joinedload
 
 from app.api.base import BaseAPI, RouteDefinition
 from app.api.common import get_or_404
@@ -27,6 +27,11 @@ from app.models import PharmacistProfile
 from app.services.auth import get_current_profile
 
 
+def invoice_load_options():
+    # Batch related invoice data instead of querying separately for each sale/line.
+    return (joinedload(Sale.payment), joinedload(Sale.company_record),
+            selectinload(Sale.items).joinedload(SaleItem.discount_record))
+
 class SaleAPI(BaseAPI):
     methods = ["GET", "POST"]
     routes = [
@@ -40,7 +45,7 @@ class SaleAPI(BaseAPI):
 
     @staticmethod
     def prescribers(db: Session = Depends(get_db)):
-        doctors = db.scalars(select(PharmacistProfile).where(PharmacistProfile.role == 'doctor')).all()
+        doctors = db.execute(select(PharmacistProfile.first_name, PharmacistProfile.last_name).where(PharmacistProfile.role == 'doctor')).all()
         names = set(db.scalars(select(Prescription.doctor_name).distinct()))
         names.update(f'{p.first_name} {p.last_name}' for p in doctors)
         return sorted(name for name in names if name)
@@ -54,8 +59,17 @@ class SaleAPI(BaseAPI):
         return SaleAPI.post(payload, db)
 
     @staticmethod
-    def get(db: Session = Depends(get_db)) -> list[Sale]:
-        return list(db.scalars(select(Sale).options(selectinload(Sale.items)).order_by(Sale.created_at.desc())))
+    def get(db: Session = Depends(get_db), from_at: datetime | None = None,
+            to_at: datetime | None = None) -> list[Sale]:
+        def utc_naive(value):
+            return value.astimezone(timezone.utc).replace(tzinfo=None) if value and value.tzinfo else value
+        start, end = utc_naive(from_at), utc_naive(to_at)
+        if start is not None and end is not None and start >= end:
+            raise HTTPException(422,'The sales date range must end after it starts')
+        statement = select(Sale).options(*invoice_load_options())
+        if start is not None: statement = statement.where(Sale.created_at >= start)
+        if end is not None: statement = statement.where(Sale.created_at < end)
+        return list(db.scalars(statement.order_by(Sale.created_at.desc(),Sale.id.desc())))
 
     @staticmethod
     def post(payload: SaleCreate, db: Session = Depends(get_db)) -> Sale:
@@ -76,7 +90,7 @@ class SaleAPI(BaseAPI):
             if receipt:
                 if receipt.actor_id != db.info.get('actor_id') or receipt.payload_hash != receipt_hash:
                     raise HTTPException(409, 'Checkout reference has already been used for another request')
-                return db.scalar(select(Sale).options(selectinload(Sale.items)).where(Sale.id == receipt.sale_id))
+                return db.scalar(select(Sale).options(*invoice_load_options()).where(Sale.id == receipt.sale_id))
         if payload.customer_id is not None:
             get_or_404(db, Customer, payload.customer_id, "Customer")
         prescription = None
@@ -149,5 +163,6 @@ class SaleAPI(BaseAPI):
         if receipt_hash:
             db.add(CheckoutReceipt(request_id=str(payload.request_id), actor_id=db.info['actor_id'],
                                    payload_hash=receipt_hash, sale_id=sale.id))
+        saved_sale_id = sale.id
         db.commit()
-        return db.scalar(select(Sale).options(selectinload(Sale.items)).where(Sale.id == sale.id))
+        return db.scalar(select(Sale).options(*invoice_load_options()).where(Sale.id == saved_sale_id))
