@@ -68,7 +68,9 @@ class SaleAPI(BaseAPI):
         lock_inventory(db)
         receipt_hash = None
         if isinstance(payload, CheckoutCreate):
-            receipt_json = payload.model_dump_json(exclude={'items': {'__all__': {'discount_percent'}}}) if all(not item.discount_percent for item in payload.items) else payload.model_dump_json()
+            exclusions = {} if payload.customer_mobile else {'customer_mobile': True}
+            if all(not item.discount_percent for item in payload.items): exclusions['items'] = {'__all__': {'discount_percent'}}
+            receipt_json = payload.model_dump_json(exclude=exclusions)
             receipt_hash = sha256(receipt_json.encode()).hexdigest()
             receipt = db.get(CheckoutReceipt, str(payload.request_id))
             if receipt:
@@ -104,9 +106,14 @@ class SaleAPI(BaseAPI):
                 raise HTTPException(422, 'Payment must cover the current bill total; digital payments must match it exactly')
         customer_id = payload.customer_id
         if isinstance(payload, CheckoutCreate):
-            customer = Customer(full_name=payload.patient_name)
-            db.add(customer); db.flush()
-            queue_if_enabled(db, 'customers', customer)
+            from app.services.customer_mobile import customers_by_mobile
+            matches = customers_by_mobile(db,payload.customer_mobile) if payload.customer_mobile else []
+            same_name = [customer for customer in matches if customer.full_name.strip().casefold()==payload.patient_name.casefold()]
+            customer = same_name[0] if len(same_name)==1 else None
+            if customer is None:
+                customer = Customer(full_name=payload.patient_name,phone=payload.customer_mobile)
+                db.add(customer); db.flush()
+                queue_if_enabled(db, 'customers', customer)
             prescription = Prescription(customer_id=customer.id, doctor_name=payload.prescribed_by,
                                         prescribed_on=date.today(), status=PrescriptionStatus.pending)
             db.add(prescription); db.flush()

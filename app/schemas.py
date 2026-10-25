@@ -116,7 +116,19 @@ class CheckoutCreate(SaleCreate):
     request_id: UUID
     payment: PaymentCreate
     patient_name: str = Field(min_length=2, max_length=150)
-    prescribed_by: str = Field(min_length=2, max_length=150)
+    customer_mobile: str | None = Field(default=None, max_length=40)
+    prescribed_by: str = Field(default='self', min_length=2, max_length=150)
+
+    @field_validator('prescribed_by', mode='before')
+    @classmethod
+    def default_prescriber(cls,value):
+        return (value or '').strip() or 'self'
+
+    @field_validator('customer_mobile', mode='before')
+    @classmethod
+    def mobile_number(cls,value):
+        from app.services.customer_mobile import normalize_mobile
+        return normalize_mobile(value)
 
 
 
